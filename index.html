@@ -6,35 +6,27 @@
     <title>ScreenPrint Pro - Pre-press Suite</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/pyodide/v0.27.2/full/pyodide.js"></script>
-    <script>
-      tailwind.config = {
-        theme: {
-          extend: {
-            colors: {
-              gray: {
-                750: '#2d3748',
-                850: '#1a202c',
-                950: '#171923',
-              }
-            }
-          }
-        }
-      }
+    <script type="module">
+        import * as pdfjsLib from 'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.0.379/+esm';
+        pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.0.379/build/pdf.worker.min.mjs';
+        window.pdfjsLib = pdfjsLib;
     </script>
   <script type="importmap">
 {
   "imports": {
-    "lucide-react": "https://esm.sh/lucide-react@^0.563.0",
     "react/": "https://esm.sh/react@^19.2.4/",
     "react": "https://esm.sh/react@^19.2.4",
     "react-dom/": "https://esm.sh/react-dom@^19.2.4/",
-    "jszip": "https://esm.sh/jszip@3.10.1",
-    "file-saver": "https://esm.sh/file-saver@2.0.5"
+    "lucide-react": "https://esm.sh/lucide-react@^0.563.0",
+    "file-saver": "https://esm.sh/file-saver@^2.0.5",
+    "jszip": "https://esm.sh/jszip@^3.10.1",
+    "ag-psd": "https://esm.sh/ag-psd@^15.0.0"
   }
 }
 </script>
 </head>
-  <body class="bg-gray-900 text-white antialiased">
+  <body class="bg-gray-950 text-white">
     <div id="root"></div>
+    <script type="module" src="/index.tsx"></script>
   </body>
 </html>
