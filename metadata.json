@@ -1,0 +1,5 @@
+{
+  "name": "ScreenPrint Pro",
+  "description": "Professional Screen Printing Pre-press application. Features intelligent palette analysis, mathematical color separation (Simulated Process), and Floyd-Steinberg halftoning.",
+  "requestFramePermissions": []
+}
