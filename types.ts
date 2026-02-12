@@ -39,7 +39,7 @@ export interface AdvancedConfig {
 
 export const DEFAULT_CONFIG: AdvancedConfig = {
   sampleSize: 20000,
-  inkOpacity: 0.92,
+  inkOpacity: 0.95, // Increased for richer preview
   kL: 1.0,
   kC: 1.0,
   kH: 1.0,
@@ -48,9 +48,9 @@ export const DEFAULT_CONFIG: AdvancedConfig = {
   speckleSize: 0,
   erosionAmount: 0,
   halftoneType: 'am',
-  halftoneLpi: 45,
+  halftoneLpi: 50, // Higher frequency for cleaner look
   halftoneAngle: 22.5,
-  gamma: 1.0
+  gamma: 1.25 // Slight gamma boost for "pop"
 };
 
 export enum ProcessingStatus {

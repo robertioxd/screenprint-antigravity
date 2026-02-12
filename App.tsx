@@ -1,13 +1,15 @@
 import React, { useState, useEffect } from 'react';
-import { Layers, Printer, Wand2, Settings, Download, ScanEye, Package, ChevronDown, FileImage, FileArchive, Pipette } from 'lucide-react';
+import { Layers, Printer, Wand2, Settings, Download, ScanEye, Package, ChevronDown, FileImage, FileArchive, Pipette, Maximize2, X } from 'lucide-react';
 import UploadZone from './components/UploadZone';
 import PaletteManager from './components/PaletteManager';
 import LayerPreview from './components/LayerPreview';
 import ComparisonView from './components/ComparisonView';
 import AdvancedSettings from './components/AdvancedSettings';
 import Button from './components/Button';
+import LayerDetailModal from './components/LayerDetailModal';
+import { ChopModal, MergeModal, EditColorModal } from './components/LayerActionModals';
 import { Layer, PaletteColor, ProcessingStatus, AdvancedConfig, DEFAULT_CONFIG } from './types';
-import { analyzePalette, performSeparation, applyHalftone, initEngine, generateComposite, getPyodideInfo, hexToRgb } from './services/imageProcessing';
+import { analyzePalette, performSeparation, applyHalftone, initEngine, generateComposite, getPyodideInfo, hexToRgb, mergeLayersData, createGrayscaleFromAlpha } from './services/imageProcessing';
 import { downloadComposite, downloadChannelsZip } from './services/exportService';
 
 const App: React.FC = () => {
@@ -25,8 +27,12 @@ const App: React.FC = () => {
   // UI State
   const [showPackageList, setShowPackageList] = useState(false);
   const [showExportMenu, setShowExportMenu] = useState(false);
-  const [showAdvancedSettings, setShowAdvancedSettings] = useState(true); // Open by default for easier tuning
+  const [showAdvancedSettings, setShowAdvancedSettings] = useState(true); 
   const [isPickerActive, setIsPickerActive] = useState(false);
+  
+  // Layer Management State
+  const [previewLayerIndex, setPreviewLayerIndex] = useState<number | null>(null);
+  const [modalMode, setModalMode] = useState<'view' | 'chop' | 'merge' | 'edit'>('view');
 
   // Initialize Pyodide
   useEffect(() => {
@@ -127,7 +133,132 @@ const App: React.FC = () => {
         };
         updateComposite();
     }
-  }, [advancedConfig.inkOpacity]);
+  }, [advancedConfig.inkOpacity, layers]); // Added layers dependency to update when layers change
+
+  /* --- LAYER ACTIONS LOGIC --- */
+  
+  const handleLayerAction = (action: 'chop' | 'merge' | 'edit' | 'delete', layer: Layer) => {
+      if (action === 'delete') {
+          if (confirm(`Are you sure you want to delete the ${layer.color.hex} channel?`)) {
+              const newLayers = layers.filter(l => l.id !== layer.id);
+              setLayers(newLayers);
+              setPreviewLayerIndex(null);
+          }
+      } else {
+          setModalMode(action);
+          // Preview index should already be set
+      }
+  };
+
+  const handleEditColorSave = (newHex: string) => {
+      if (previewLayerIndex === null) return;
+      const targetLayer = layers[previewLayerIndex];
+      const newLayers = [...layers];
+      newLayers[previewLayerIndex] = {
+          ...targetLayer,
+          color: { ...targetLayer.color, hex: newHex, rgb: hexToRgb(newHex) }
+      };
+      setLayers(newLayers);
+      setModalMode('view');
+  };
+
+  const handleMergeLayers = (layersToMerge: Layer[], finalColorHex: string) => {
+      if (previewLayerIndex === null) return;
+      const targetLayer = layers[previewLayerIndex];
+      
+      // Merge Data
+      const mergedData = mergeLayersData(targetLayer.data, layersToMerge.map(l => l.data));
+      
+      // Create new layer
+      const newLayer: Layer = {
+          id: targetLayer.id, // Keep ID
+          color: { ...targetLayer.color, hex: finalColorHex, rgb: hexToRgb(finalColorHex) },
+          data: mergedData,
+          visible: true
+      };
+      
+      // Update State: Replace target with new, remove others
+      const idsToRemove = new Set(layersToMerge.map(l => l.id));
+      const newLayerList = layers.filter(l => !idsToRemove.has(l.id)).map(l => {
+          if (l.id === targetLayer.id) return newLayer;
+          return l;
+      });
+      
+      setLayers(newLayerList);
+      setModalMode('view');
+  };
+
+  const handleChopGenerate = async (config: AdvancedConfig, count: number): Promise<Layer[]> => {
+      if (previewLayerIndex === null) return [];
+      const targetLayer = layers[previewLayerIndex];
+      
+      // 1. Prepare Image: Convert alpha channel to grayscale RGB image
+      const grayData = createGrayscaleFromAlpha(targetLayer);
+      
+      // 2. Generate Palette: Since we are splitting 1 color, we should generate N shades?
+      // Actually, the separation engine needs a palette. 
+      // We can ask `analyzePalette` to find N dominant clusters in this grayscale representation.
+      const subPalette = await analyzePalette(grayData, count, { ...config, sampleSize: 50000 });
+
+      // 3. Separate
+      const separated = await performSeparation(grayData, subPalette, config);
+      
+      // 4. Return layers, but color them with the ORIGINAL layer color?
+      // No, usually when chopping, you want to keep the distinct shades to simulate gradient, 
+      // OR you want to split spatially. If spatially (Vector), colors might be similar.
+      // If simulated process, colors are shades.
+      // Let's keep the analyzed colors for preview (which are grays), 
+      // BUT for final application, the user might want them to be the original color?
+      // The prompt says "Generate Sublayers". Usually in screen print, you split a "Red" into "Dark Red" and "Light Red".
+      // So keeping the analyzed colors (shades of gray->black) implies opacity.
+      // Let's assume we map the generated gray-scale intensity back to the original color?
+      // Actually, standard behavior is finding density clusters. 
+      // Let's just return the separated layers as is (Grayscale/Black).
+      // The user can Edit Color later if they want specific tints.
+      // Wait, better UX: Tint them with the original color but varying opacity? 
+      // No, separation returns Alpha. 
+      // Let's assign the ORIGINAL Color to all sublayers for now, so they look like parts of the whole.
+      
+      return separated.map(l => ({
+          ...l,
+          color: targetLayer.color // Inherit original color
+      }));
+  };
+
+  // Corrected signature handling for Apply
+  const handleChopApply = (keptLayers: Layer[], layersToMerge: Layer[]) => {
+      if (previewLayerIndex === null) return;
+      const targetLayer = layers[previewLayerIndex];
+
+      // 1. Merge the "unselected" layers if any
+      let mergedResidue: Layer | null = null;
+      if (layersToMerge && layersToMerge.length > 0) {
+           const mergedData = mergeLayersData(layersToMerge[0].data, layersToMerge.slice(1).map(l => l.data));
+           mergedResidue = {
+               id: `residue-${Date.now()}`,
+               color: targetLayer.color,
+               data: mergedData,
+               visible: true
+           };
+      }
+
+      // 2. Construct new layer list
+      // Replace the targetLayer with [...keptLayers, mergedResidue]
+      const finalNewLayers: Layer[] = [];
+      layers.forEach(l => {
+          if (l.id === targetLayer.id) {
+              finalNewLayers.push(...keptLayers);
+              if (mergedResidue) finalNewLayers.push(mergedResidue);
+          } else {
+              finalNewLayers.push(l);
+          }
+      });
+      
+      setLayers(finalNewLayers);
+      setPreviewLayerIndex(null); // Close modal as the original layer is gone
+      setModalMode('view');
+  };
+
 
   return (
     <div className="min-h-screen flex flex-col h-screen overflow-hidden" onClick={() => {
@@ -287,19 +418,29 @@ const App: React.FC = () => {
                     </h3>
                     {compositeImage && <div className="relative bg-black/50 flex items-center justify-center rounded-lg overflow-hidden border border-gray-700 min-h-[400px] shadow-inner"><LayerPreview imageData={compositeImage} width={compositeImage.width} height={compositeImage.height} /></div>}
                 </div>
-                {layers.map((layer) => (
-                  <div key={layer.id} className="space-y-2 group animate-in slide-in-from-bottom-4 duration-300">
-                    <div className="flex items-center justify-between text-gray-400 text-[10px] uppercase font-bold bg-gray-900 p-3 rounded-t-lg border-x border-t border-gray-800 group-hover:bg-gray-850 transition-colors">
+                {layers.map((layer, index) => (
+                  <div 
+                    key={layer.id} 
+                    className="space-y-2 group animate-in slide-in-from-bottom-4 duration-300 relative"
+                  >
+                    <div className="flex items-center justify-between text-gray-400 text-[10px] uppercase font-bold bg-gray-900 p-3 rounded-t-lg border-x border-t border-gray-800 group-hover:bg-gray-850 transition-colors cursor-pointer" onClick={() => setPreviewLayerIndex(index)}>
                        <span className="flex items-center gap-2"><span className="w-3 h-3 rounded-full shadow-sm ring-1 ring-white/10" style={{backgroundColor: layer.color.hex}}></span>{layer.color.hex}</span>
-                       <span className="opacity-50 text-[9px]">{activeTab === 'halftone' ? 'TRAMA AM' : 'SEPARACIÓN'}</span>
+                       <div className="flex items-center gap-2">
+                            <span className="opacity-50 text-[9px]">{activeTab === 'halftone' ? 'AM' : 'SEP'}</span>
+                            <Maximize2 className="w-3 h-3 opacity-0 group-hover:opacity-100 transition-opacity text-blue-400" />
+                       </div>
                     </div>
-                    <div className="border-x border-b border-gray-800 rounded-b-lg overflow-hidden shadow-lg group-hover:shadow-blue-500/5 transition-all">
+                    <div 
+                        className="border-x border-b border-gray-800 rounded-b-lg overflow-hidden shadow-lg group-hover:shadow-blue-500/5 transition-all cursor-zoom-in relative"
+                        onClick={() => setPreviewLayerIndex(index)}
+                    >
                       <LayerPreview 
                         imageData={layer.data} 
                         width={layer.data.width} 
                         height={layer.data.height} 
                         tint={activeTab === 'separation' ? layer.color.hex : undefined} 
                       />
+                      <div className="absolute inset-0 bg-blue-500/10 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none"></div>
                     </div>
                   </div>
                 ))}
@@ -309,6 +450,55 @@ const App: React.FC = () => {
         </section>
       </main>
       
+      {/* LAYER MANAGEMENT MODALS */}
+      {previewLayerIndex !== null && modalMode === 'view' && (
+          <LayerDetailModal 
+            layer={layers[previewLayerIndex]}
+            index={previewLayerIndex}
+            totalLayers={layers.length}
+            onClose={() => setPreviewLayerIndex(null)}
+            onNavigate={(dir) => {
+                if (dir === 'prev') setPreviewLayerIndex(Math.max(0, previewLayerIndex - 1));
+                if (dir === 'next') setPreviewLayerIndex(Math.min(layers.length - 1, previewLayerIndex + 1));
+            }}
+            onAction={handleLayerAction}
+            isHalftone={activeTab === 'halftone'}
+          />
+      )}
+
+      {/* COMPLEX ACTION MODALS */}
+      {previewLayerIndex !== null && modalMode !== 'view' && (
+          <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-in fade-in duration-200" onClick={() => { if(modalMode !== 'chop') setModalMode('view'); }}>
+             {/* Note: Click outside handler for Chop might be annoying if generating takes time, so we block generic close for Chop/Merge usually, but here strict for simple UX */}
+             
+             <div onClick={e => e.stopPropagation()} className="w-full flex justify-center">
+                 {modalMode === 'chop' && (
+                     <ChopModal 
+                        layer={layers[previewLayerIndex]}
+                        onClose={() => setModalMode('view')}
+                        onGenerate={handleChopGenerate}
+                        onApply={(kept, toMerge) => handleChopApply(kept, toMerge as Layer[])}
+                     />
+                 )}
+                 {modalMode === 'merge' && (
+                     <MergeModal 
+                        targetLayer={layers[previewLayerIndex]}
+                        allLayers={layers}
+                        onClose={() => setModalMode('view')}
+                        onMerge={handleMergeLayers}
+                     />
+                 )}
+                 {modalMode === 'edit' && (
+                     <EditColorModal 
+                        layer={layers[previewLayerIndex]}
+                        onClose={() => setModalMode('view')}
+                        onSave={handleEditColorSave}
+                     />
+                 )}
+             </div>
+          </div>
+      )}
+
       {status === ProcessingStatus.LOADING_ENGINE && (
         <div className="fixed inset-0 bg-black/90 z-[100] flex items-center justify-center backdrop-blur-md">
             <div className="text-center max-w-md p-10 bg-gray-800 rounded-3xl border border-gray-700 shadow-2xl ring-1 ring-white/10">
