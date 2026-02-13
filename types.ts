@@ -61,15 +61,15 @@ export const DEFAULT_CONFIG: AdvancedConfig = {
   separationType: 'vector',
   
   outputDpi: 300,
-  outputSizeInches: 12,
+  outputSizeInches: 3, // Changed from 12 to 3
   outputMeasurement: 'width',
 
   useVectorAntiAliasing: true,
   useRasterAdaptive: true,
 
-  cleanupStrength: 3,
+  cleanupStrength: 0, // Changed from 3 to 0
   smoothEdges: 0,
-  minCoverage: 0.5,
+  minCoverage: 0.2, // Changed from 0.5 to 0.2
 
   halftoneType: 'am',
   halftoneLpi: 45, 

@@ -1,4 +1,4 @@
-import React, { useRef, useEffect, useState } from 'react';
+import React, { useRef, useEffect, useState, memo } from 'react';
 
 interface LayerPreviewProps {
   imageData: ImageData | null;
@@ -20,7 +20,7 @@ interface LoupeState {
   hex: string;
 }
 
-const LayerPreview: React.FC<LayerPreviewProps> = ({ imageData, width, height, label, tint, onPixelSelect, className, fitContain }) => {
+const LayerPreview: React.FC<LayerPreviewProps> = memo(({ imageData, width, height, label, tint, onPixelSelect, className, fitContain }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const loupeCanvasRef = useRef<HTMLCanvasElement>(null);
   const [loupe, setLoupe] = useState<LoupeState>({ visible: false, x: 0, y: 0, pixelX: 0, pixelY: 0, hex: '' });
@@ -68,14 +68,15 @@ const LayerPreview: React.FC<LayerPreviewProps> = ({ imageData, width, height, l
     const halfGrid = Math.floor(gridSize / 2);
     
     // Clear
-    ctx.fillStyle = '#111';
+    ctx.fillStyle = '#000';
     ctx.fillRect(0, 0, ctx.canvas.width, ctx.canvas.height);
 
     // Draw zoomed pixels
     for (let dy = -halfGrid; dy <= halfGrid; dy++) {
       for (let dx = -halfGrid; dx <= halfGrid; dx++) {
-        const px = loupe.pixelX + dx;
-        const py = loupe.pixelY + dy;
+        // Clamp coordinates to stay within image bounds
+        const px = Math.min(width - 1, Math.max(0, loupe.pixelX + dx));
+        const py = Math.min(height - 1, Math.max(0, loupe.pixelY + dy));
 
         if (px >= 0 && px < width && py >= 0 && py < height) {
            const idx = (py * width + px) * 4;
@@ -96,12 +97,12 @@ const LayerPreview: React.FC<LayerPreviewProps> = ({ imageData, width, height, l
 
     // Draw Reticle (Center highlight)
     const centerStart = halfGrid * zoom;
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.8)';
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.9)';
     ctx.lineWidth = 1;
     ctx.strokeRect(centerStart, centerStart, zoom, zoom);
     
     // Inner contrast stroke
-    ctx.strokeStyle = 'rgba(0, 0, 0, 0.5)';
+    ctx.strokeStyle = 'rgba(0, 0, 0, 0.6)';
     ctx.strokeRect(centerStart + 1, centerStart + 1, zoom - 2, zoom - 2);
 
   }, [loupe, imageData, width, height, onPixelSelect]);
@@ -120,6 +121,7 @@ const LayerPreview: React.FC<LayerPreviewProps> = ({ imageData, width, height, l
     const scaleX = canvas.width / rect.width;
     const scaleY = canvas.height / rect.height;
     
+    // Precise integer pixel coordinate
     const px = Math.floor(xDisplay * scaleX);
     const py = Math.floor(yDisplay * scaleY);
 
@@ -171,9 +173,12 @@ const LayerPreview: React.FC<LayerPreviewProps> = ({ imageData, width, height, l
     ? `relative group border border-gray-600 rounded overflow-hidden shadow-sm ${bgStyle} flex items-center justify-center ${className || ''}`
     : `relative group border border-gray-600 rounded overflow-hidden shadow-sm ${bgStyle} ${className || ''}`;
 
+  // Changed to 'cursor-crosshair' for better precision when picking
+  const cursorClass = onPixelSelect ? 'cursor-crosshair' : 'cursor-default';
+
   const canvasClasses = fitContain
-    ? `max-w-full max-h-full w-auto h-auto block ${onPixelSelect ? 'cursor-none' : 'cursor-default'}`
-    : `w-full h-auto block ${onPixelSelect ? 'cursor-none' : 'cursor-default'}`;
+    ? `max-w-full max-h-full w-auto h-auto block ${cursorClass}`
+    : `w-full h-auto block ${cursorClass}`;
 
   return (
     <>
@@ -199,8 +204,11 @@ const LayerPreview: React.FC<LayerPreviewProps> = ({ imageData, width, height, l
             <div 
                 className="fixed z-50 pointer-events-none flex flex-col items-center gap-1"
                 style={{ 
-                    left: loupe.x + 20, 
-                    top: loupe.y - 80, // Position above-right of cursor
+                    // Centered on cursor: 
+                    // left = x - half_width (w-28 = 112px, half = 56px)
+                    // top = y - half_height (h-28 = 112px, half = 56px)
+                    left: loupe.x - 56, 
+                    top: loupe.y - 56, 
                 }}
             >
                 <div className="relative w-28 h-28 rounded-full border-4 border-white shadow-[0_10px_25px_-5px_rgba(0,0,0,0.5)] overflow-hidden bg-black">
@@ -208,10 +216,10 @@ const LayerPreview: React.FC<LayerPreviewProps> = ({ imageData, width, height, l
                         ref={loupeCanvasRef}
                         width={176} // 11 pixels * 16 zoom
                         height={176}
-                        className="w-full h-full object-cover image-pixelated"
+                        className="w-full h-full object-cover"
                         style={{ imageRendering: 'pixelated' }}
                     />
-                     {/* Crosshair Overlay */}
+                     {/* Crosshair Overlay in Loupe */}
                     <div className="absolute inset-0 flex items-center justify-center opacity-30">
                         <div className="w-full h-px bg-white absolute"></div>
                         <div className="h-full w-px bg-white absolute"></div>
@@ -226,6 +234,6 @@ const LayerPreview: React.FC<LayerPreviewProps> = ({ imageData, width, height, l
         )}
     </>
   );
-};
+});
 
 export default LayerPreview;

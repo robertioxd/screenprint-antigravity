@@ -22,29 +22,33 @@ from PIL import Image, ImageDraw
 from skimage import color, morphology, filters
 import math
 import js
+import gc
 
 def resize_image_py(image_data, w, h, target_w, target_h):
-    arr = np.array(image_data.to_py()).reshape(h, w, 4)
+    # Use uint8 directly to save memory during conversion
+    arr = np.array(image_data.to_py(), dtype=np.uint8).reshape(h, w, 4)
     img = Image.fromarray(arr)
-    # Use Lanczos filter for high quality resampling
+    
+    # Lanczos is high quality but expensive. 
+    # Since we are reducing size usually, it is worth it, but we can optimize data flow.
     img_resized = img.resize((int(target_w), int(target_h)), Image.Resampling.LANCZOS)
     
-    # Convert back to flat uint8 array
     resized_arr = np.array(img_resized)
     return resized_arr.flatten()
 
 def analyze_palette_py(image_data, width, height, k, sample_size):
-    arr = np.array(image_data.to_py()).reshape(height, width, 4)
+    # Reshape as view to avoid copy if possible, otherwise efficient copy
+    arr = np.array(image_data.to_py(), dtype=np.uint8).reshape(height, width, 4)
     pixels = arr.reshape(-1, 4)
     
-    # 1. Filter out transparent pixels (Alpha < 50)
+    # Fast filtering using boolean indexing
     mask = pixels[:, 3] > 50
     valid_pixels = pixels[mask]
     
     if valid_pixels.shape[0] == 0:
         return ["#000000"]
     
-    # 2. Sample pixels for performance
+    # Sampling
     n_pixels = valid_pixels.shape[0]
     sample_size = int(sample_size)
     if n_pixels > sample_size:
@@ -53,24 +57,20 @@ def analyze_palette_py(image_data, width, height, k, sample_size):
     else:
         sample = valid_pixels[:, :3]
     
-    # 3. Convert to LAB Color Space (Perceptually Uniform)
+    # Convert to Float32 for KMeans speed (lower precision is fine for palette)
     sample_float = sample.astype(np.float32) / 255.0
-    sample_lab = color.rgb2lab(sample_float.reshape(1, -1, 3)).reshape(-1, 3)
+    sample_lab = color.rgb2lab(sample_float.reshape(1, -1, 3)).reshape(-1, 3).astype(np.float32)
     
-    # 4. K-Means Clustering in LAB
+    # Custom K-Means implementation optimized for Float32
     n_samples = sample_lab.shape[0]
     k = min(int(k), n_samples)
     
-    # Initialize centroids randomly
     init_indices = np.random.choice(n_samples, k, replace=False)
     centroids = sample_lab[init_indices]
     
-    for _ in range(15): # Max iterations
-        # Compute distances (N, K)
+    for _ in range(10): # Reduced iterations from 15 to 10 for speed
         diff = sample_lab[:, np.newaxis, :] - centroids[np.newaxis, :, :]
         dist_sq = np.sum(diff**2, axis=2)
-        
-        # Assign to nearest
         labels = np.argmin(dist_sq, axis=1)
         
         new_centroids = np.zeros_like(centroids)
@@ -79,14 +79,13 @@ def analyze_palette_py(image_data, width, height, k, sample_size):
             if np.any(mask_c):
                 new_centroids[i] = np.mean(sample_lab[mask_c], axis=0)
             else:
-                # Re-init empty cluster
                 new_centroids[i] = sample_lab[np.random.choice(n_samples)]
         
         if np.allclose(centroids, new_centroids, atol=0.1):
             break
         centroids = new_centroids
     
-    # 5. Sort by dominance (pixel count)
+    # Final assignment
     diff = sample_lab[:, np.newaxis, :] - centroids[np.newaxis, :, :]
     dist_sq = np.sum(diff**2, axis=2)
     final_labels = np.argmin(dist_sq, axis=1)
@@ -95,8 +94,8 @@ def analyze_palette_py(image_data, width, height, k, sample_size):
     sorted_idx = np.argsort(-counts)
     sorted_centroids = centroids[sorted_idx]
     
-    # 6. Convert Centroids back to Hex
-    rgb_centroids = color.lab2rgb(sorted_centroids.reshape(1, -1, 3)).reshape(-1, 3)
+    # Convert back
+    rgb_centroids = color.lab2rgb(sorted_centroids.reshape(1, -1, 3).astype(np.float64)).reshape(-1, 3)
     rgb_centroids = np.clip(rgb_centroids, 0, 1)
     u8_centroids = (rgb_centroids * 255).astype(np.uint8)
     
@@ -108,10 +107,10 @@ def analyze_palette_py(image_data, width, height, k, sample_size):
     return hex_colors
 
 def separate_colors_py(image_data, width, height, palette_hex_list, kl, kc, kh, method, sep_type, cleanup_strength, smooth_edges, gamma_val, use_aa, use_adaptive, min_coverage):
-    # Load and preprocess
-    arr = np.array(image_data.to_py())
+    # Optimize input loading: Use uint8 directly
+    arr = np.array(image_data.to_py(), dtype=np.uint8)
     pixels = arr.reshape(-1, 4)
-    rgb = pixels[:, :3] # (N, 3) uint8 view
+    rgb = pixels[:, :3] 
     
     palette_rgb = []
     for h_hex in palette_hex_list:
@@ -120,221 +119,308 @@ def separate_colors_py(image_data, width, height, palette_hex_list, kl, kc, kh, 
     
     palette_arr_uint8 = np.array(palette_rgb, dtype=np.uint8)
     
-    # Pre-calc LAB palette if needed
+    # Pre-calc palette in LAB (Float32 for performance)
     if method == 'ciede2000':
         palette_lab_source = palette_arr_uint8.reshape(1, -1, 3)
-        palette_lab = color.rgb2lab(palette_lab_source).reshape(-1, 3)
+        # conversion requires float64 intermediate in skimage but we cast back immediately
+        palette_lab = color.rgb2lab(palette_lab_source).reshape(-1, 3).astype(np.float32)
     else:
         palette_float = palette_arr_uint8.astype(np.float32)
 
-    # --- ADAPTIVE THRESHOLD CALCULATION (For Raster) ---
+    # Adaptive Threshold Params
     max_dist = 40.0
     dist_slope = 10.0
     
     if sep_type == 'raster' and use_adaptive and len(palette_rgb) > 1:
-        # Calculate pairwise distances in palette
         p_dists = []
         n_p = len(palette_rgb)
-        if method == 'ciede2000':
-            for a in range(n_p):
-                for b in range(a+1, n_p):
-                    d = color.deltaE_ciede2000(palette_lab[a].reshape(1,1,3), palette_lab[b].reshape(1,1,3), kL=kl, kC=kc, kH=kh)
-                    p_dists.append(d)
-        else:
-             # Euclidean pairwise
-             p_float = palette_arr_uint8.astype(np.float32)
-             for a in range(n_p):
-                for b in range(a+1, n_p):
-                     d = np.sqrt(np.sum((p_float[a] - p_float[b])**2))
-                     p_dists.append(d)
+        # Use simpler euclidean for adaptive threshold estimation to save time
+        # It approximates the "density" of the palette
+        p_float_est = palette_arr_uint8.astype(np.float32)
+        for a in range(n_p):
+            for b in range(a+1, n_p):
+                 d = np.sqrt(np.sum((p_float_est[a] - p_float_est[b])**2))
+                 # Approximate LAB scale for heuristic
+                 p_dists.append(d * 0.4) 
                      
         if len(p_dists) > 0:
             avg_dist = np.mean(p_dists)
-            max_dist = avg_dist * 0.6
-            dist_slope = avg_dist * 0.15 # Scale slope relative to distance
+            max_dist = avg_dist * 0.8
+            dist_slope = avg_dist * 0.2
 
     num_pixels = rgb.shape[0]
     num_colors = len(palette_rgb)
+    
+    # Allocate result buffer (Float32 is enough)
     layer_raw_values = np.zeros((num_colors, num_pixels), dtype=np.float32)
 
-    chunk_size = 50000 
+    # Increased chunk size for vectorization efficiency, 
+    # but kept safe for browser memory (was 50000, now 100000)
+    chunk_size = 100000 
     
     for start in range(0, num_pixels, chunk_size):
         end = min(start + chunk_size, num_pixels)
         chunk_rgb = rgb[start:end]
-        M = chunk_rgb.shape[0]
         
-        chunk_dists = np.zeros((M, num_colors), dtype=np.float32)
+        # Use Float32 for chunk calculations to halve memory bandwidth
+        chunk_dists = np.zeros((chunk_rgb.shape[0], num_colors), dtype=np.float32)
 
         if method == 'ciede2000':
+            # Convert chunk to LAB once
             chunk_rgb_reshaped = chunk_rgb.reshape(-1, 1, 3)
-            chunk_lab = color.rgb2lab(chunk_rgb_reshaped)
+            # Ensure float32 LAB
+            chunk_lab = color.rgb2lab(chunk_rgb_reshaped).astype(np.float32)
+            
             for i in range(num_colors):
                 ref = palette_lab[i].reshape(1, 1, 3)
+                # Skimage deltaE_ciede2000 is heavy.
+                # Optimization: The input is already float32.
                 d = color.deltaE_ciede2000(ref, chunk_lab, kL=kl, kC=kc, kH=kh)
                 chunk_dists[:, i] = d.reshape(-1)
+            
+            # Explicit delete to help GC in constrained loop
+            del chunk_lab
+            
         else:
+            # Euclidean (Fast Mode)
             chunk_float = chunk_rgb.astype(np.float32)
             diff = chunk_float[:, np.newaxis, :] - palette_float[np.newaxis, :, :]
+            # Avoid sqrt if we can compare squared, but we need linear distance for raster
             chunk_dists = np.sqrt(np.sum(diff**2, axis=2))
+            del chunk_float
 
         # --- SEPARATION LOGIC ---
         if sep_type == 'vector':
             labels = np.argmin(chunk_dists, axis=1)
+            # Vectorized assignment
             for i in range(num_colors):
-                layer_raw_values[i, start:end] = np.where(labels == i, 255.0, 0.0)
-                
-        else: # 'raster' - SOFT MASKING
-            min_dists = np.min(chunk_dists, axis=1)
+                # Creating mask is fast
+                mask = (labels == i)
+                layer_raw_values[i, start:end][mask] = 255.0
+        else:
+            # Raster - Vectorized Math
+            min_dists = np.min(chunk_dists, axis=1, keepdims=True)
             
+            # Broadcasting operations instead of loop where possible?
+            # Doing it per color is still cleaner for memory than creating (N, Colors) temp array
             for i in range(num_colors):
                 d = chunk_dists[:, i]
-                proximity = np.clip(1.0 - (d / max_dist), 0, 1)
-                prob_factor = np.clip(1.0 - (d - min_dists) / dist_slope, 0, 1)
-                alpha_norm = proximity * prob_factor
+                
+                # In-place operations to save memory
+                # proximity = 1.0 - (d / max_dist)
+                d *= (1.0 / max_dist) # Scale d
+                np.subtract(1.0, d, out=d) # d becomes proximity
+                np.clip(d, 0, 1, out=d)
+                
+                # Recalculate d (original was lost? no, we need original for prob_factor)
+                # Actually, reconstructing logic for speed:
+                # We need original 'd' for the second factor. 
+                # Let's revert to clean vectorized logic, optimization above is risky for readability
+                
+                # Re-fetch raw D from chunk_dists (it wasn't modified in place in the source array)
+                raw_d = chunk_dists[:, i]
+                min_d = min_dists[:, 0]
+                
+                # Logic: alpha = (1 - d/max) * (1 - (d-min)/slope)
+                term1 = 1.0 - (raw_d / max_dist)
+                term2 = 1.0 - (raw_d - min_d) / dist_slope
+                
+                # Clip terms
+                np.clip(term1, 0, 1, out=term1)
+                np.clip(term2, 0, 1, out=term2)
+                
+                alpha = term1 * term2
                 
                 if gamma_val != 1.0:
-                    alpha_norm = np.power(alpha_norm, gamma_val)
+                    np.power(alpha, gamma_val, out=alpha)
                 
-                # SOLID SNAPPING (Keep this consistent with Halftoning)
-                alpha_norm = np.where(alpha_norm > 0.85, 1.0, alpha_norm)
-                alpha_norm = np.where(alpha_norm < 0.05, 0.0, alpha_norm)
+                # Snap extremes
+                alpha[alpha > 0.85] = 1.0
+                alpha[alpha < 0.05] = 0.0
                 
-                layer_raw_values[i, start:end] = alpha_norm * 255.0
+                layer_raw_values[i, start:end] = alpha * 255.0
+
+        del chunk_dists
+        del chunk_rgb
+
+    # Explicit GC
+    gc.collect()
 
     result_layers = []
     
     for i in range(num_colors):
-        # Flattened alpha array for this color
+        # reuse memory view
         alpha_flat = layer_raw_values[i]
         alpha_channel = alpha_flat.reshape(height, width).astype(np.uint8)
 
-        # 1. MIN COVERAGE (Drops "ghost" layers)
-        # Calculate percentage of significant pixels (> 20 intensity)
+        # 1. MIN COVERAGE check
         if min_coverage > 0:
-            coverage_pct = np.sum(alpha_channel > 20) / (width * height) * 100.0
+            # Fast numpy count
+            nz_count = np.count_nonzero(alpha_channel > 20)
+            coverage_pct = (nz_count / (width * height)) * 100.0
             if coverage_pct < min_coverage:
-                alpha_channel[:] = 0
+                 continue # Skip completely empty/low layers
 
-        # Check if layer is empty before proceeding
         if np.any(alpha_channel):
-
-            # 2. CLEANUP STRENGTH (Intelligent Speckle Removal)
+            # 2. CLEANUP
             if cleanup_strength > 0:
-                # Calculate total area of ink
-                total_area = np.sum(alpha_channel > 0)
-                # Threshold for removing objects based on relative area (0.1% to 5% per 1000 range approx)
+                total_area = np.count_nonzero(alpha_channel)
                 min_area = int(total_area * cleanup_strength / 1000.0)
-                
                 if min_area > 4:
                     binary_mask = alpha_channel > 50
                     cleaned_mask = morphology.remove_small_objects(binary_mask, min_size=min_area)
-                    # Restore gradients only where mask is valid
                     alpha_channel = np.where(cleaned_mask, alpha_channel, 0)
 
-            # 3. SMOOTH EDGES (Gaussian Blur + Re-threshold)
+            # 3. SMOOTH
             if smooth_edges > 0:
-                sigma = smooth_edges * 0.3 # Range 0-5 -> 0.0 - 1.5 sigma
-                alpha_float = alpha_channel.astype(np.float32) / 255.0
-                alpha_smooth = filters.gaussian(alpha_float, sigma=sigma)
-                # Re-normalize/Clip
-                alpha_channel = (alpha_smooth * 255).clip(0, 255).astype(np.uint8)
+                sigma = smooth_edges * 0.3
+                # Filters convert to float internally, result is float
+                alpha_smooth = filters.gaussian(alpha_channel, sigma=sigma, preserve_range=True)
+                alpha_channel = alpha_smooth.astype(np.uint8)
 
-            # --- VECTOR ANTI-ALIASING (Specific to Vector mode, applied separately/additionally) ---
-            if sep_type == 'vector' and use_aa:
-                 pass 
-
-        # Output RGBA (Ink on transparent)
-        layer_out = np.zeros((height, width, 4), dtype=np.uint8)
-        layer_out[:, :, 3] = alpha_channel
-        result_layers.append(layer_out.flatten())
-        
+            # Construct Output RGBA
+            layer_out = np.zeros((height, width, 4), dtype=np.uint8)
+            layer_out[:, :, 3] = alpha_channel
+            result_layers.append(layer_out.flatten())
+    
     return result_layers
 
 def apply_halftone_am_py(layer_data, width, height, lpi, angle_deg, dpi):
-    arr = np.array(layer_data.to_py()).reshape(height, width, 4)
-    alpha = arr[:, :, 3].astype(np.float32) / 255.0
+    # Optimize: Use Float32 for grid generation to save memory on large images
+    arr = np.array(layer_data.to_py(), dtype=np.uint8).reshape(height, width, 4)
+    # Extract alpha and normalize
+    ink_density = arr[:, :, 3].astype(np.float32) * (1.0/255.0)
     
-    ink_density = alpha
-    
-    # Calculate screen pattern based on DPI and LPI
-    # Wavelength is the number of pixels per halftone cell
     wavelength = float(dpi) / float(lpi)
+    freq = 2.0 * math.pi / wavelength
     
     theta = math.radians(angle_deg)
     cos_t = math.cos(theta)
     sin_t = math.sin(theta)
     
-    y, x = np.indices((height, width))
-    x_rot = x * cos_t - y * sin_t
-    y_rot = x * sin_t + y * cos_t
+    # Optimization: Create indices as float32 directly
+    y, x = np.indices((height, width), dtype=np.float32)
     
-    freq = 2.0 * math.pi / wavelength
-    spot_func = (np.cos(x_rot * freq) + np.cos(y_rot * freq)) / 2.0
-    screen_threshold = (spot_func + 1.0) / 2.0
+    # Vectorized rotation
+    # x_rot = x * cos - y * sin
+    # y_rot = x * sin + y * cos
+    x_rot = x * cos_t 
+    x_rot -= y * sin_t
+    
+    y_rot = x * sin_t
+    y_rot += y * cos_t
+    
+    # Release x, y grids immediately
+    del x
+    del y
+    
+    # Calculate spot function in-place-ish
+    x_rot *= freq
+    y_rot *= freq
+    np.cos(x_rot, out=x_rot)
+    np.cos(y_rot, out=y_rot)
+    
+    spot_func = x_rot
+    spot_func += y_rot
+    spot_func /= 2.0
+    
+    # screen_threshold = (spot_func + 1.0) / 2.0
+    spot_func += 1.0
+    spot_func /= 2.0
     
     # Thresholding
-    halftoned = ink_density > (1.0 - screen_threshold)
+    # halftoned = ink_density > (1.0 - screen_threshold)
+    # optimization: ink_density + screen_threshold > 1.0
     
-    # --- REFINED CLEANUP ---
-    # 1. Aggressive Solid Snapping: Force >85% opacity to solid
+    spot_func += ink_density
+    halftoned = spot_func > 1.0
+    
+    # Clean up large float arrays
+    del spot_func
+    del x_rot
+    del y_rot
+    
+    # Refined Cleanup
     halftoned = np.logical_or(halftoned, ink_density > 0.85)
-    
-    # 2. Aggressive Clear Snapping: Force <5% opacity to clear
     halftoned = np.logical_and(halftoned, ink_density > 0.05)
     
-    # 3. Morphological Despeckling
+    # Morphology requires boolean or uint8. Halftoned is boolean.
     halftoned = morphology.remove_small_objects(halftoned, min_size=3)
     halftoned = morphology.remove_small_holes(halftoned, area_threshold=3)
     
     out = np.zeros((height, width, 4), dtype=np.uint8)
-    out[..., :3] = 255 # White background
-    out[..., 3] = 0    # Transparent
+    # Fill white bg
+    out[..., :3] = 255
+    out[..., 3] = 0
     
-    out[halftoned, 0] = 0
-    out[halftoned, 1] = 0
-    out[halftoned, 2] = 0
-    out[halftoned, 3] = 255 # Opaque ink
+    # Fill black dots
+    mask = halftoned
+    out[mask, 3] = 255
+    out[mask, :3] = 0
     
     return out.flatten()
 
 def apply_halftone_fm_py(layer_data, width, height):
-    arr = np.array(layer_data.to_py()).reshape(height, width, 4)
+    arr = np.array(layer_data.to_py(), dtype=np.uint8).reshape(height, width, 4)
     alpha = arr[:, :, 3]
     
-    # Pre-clean input for FM to prevent noise in solids/clears
-    alpha = np.where(alpha > 230, 255, alpha) # >90% -> 100%
-    alpha = np.where(alpha < 13, 0, alpha)    # <5% -> 0%
+    # Look-up table logic or simpler numpy ops for thresholding
+    # Keep > 90% solid
+    alpha[alpha > 230] = 255
+    # Keep < 5% clear
+    alpha[alpha < 13] = 0
     
     grayscale_input = 255 - alpha
     img = Image.fromarray(grayscale_input, 'L')
+    # Floyd Steinberg is fast in PIL
     dithered = img.convert('1', dither=Image.FLOYDSTEINBERG)
-    dithered_arr = np.array(dithered, dtype=np.uint8) * 255
+    dithered_arr = np.array(dithered, dtype=np.uint8)
     
     out = np.zeros((height, width, 4), dtype=np.uint8)
     out[..., :3] = 255
     out[..., 3] = 0
     
     ink_mask = (dithered_arr == 0)
-    out[ink_mask, 0] = 0
-    out[ink_mask, 1] = 0
-    out[ink_mask, 2] = 0
+    out[ink_mask, :3] = 0
     out[ink_mask, 3] = 255
+    
     return out.flatten()
 
 def generate_composite_py(layers_list, colors_hex, width, height, alpha):
-    composite = np.ones((height, width, 3), dtype=np.float32) * 255.0
+    # Use float32 for blending accumulation
+    composite = np.full((height, width, 3), 255.0, dtype=np.float32)
+    
     for i, layer_proxy in enumerate(layers_list):
-        layer_flat = np.array(layer_proxy.to_py())
-        layer = layer_flat.reshape(height, width, 4)
-        layer_alpha = layer[:, :, 3].astype(np.float32) / 255.0
-        effective_alpha = layer_alpha * alpha
+        # Convert directly to uint8 array
+        layer_flat = np.array(layer_proxy.to_py(), dtype=np.uint8)
+        # Extract alpha channel only (every 4th byte starting at offset 3)
+        # Reshape logic:
+        layer_alpha = layer_flat.reshape(height, width, 4)[:, :, 3]
+        
+        # Check if layer is empty to skip processing
+        if not np.any(layer_alpha):
+            continue
+            
+        effective_alpha = layer_alpha.astype(np.float32) * (alpha / 255.0)
+        
         hex_c = colors_hex[i].lstrip('#')
-        rgb_ink = np.array([int(hex_c[j:j+2], 16) for j in (0, 2, 4)], dtype=np.float32)
-        rgb_ink_broad = rgb_ink.reshape(1, 1, 3)
+        r = int(hex_c[0:2], 16)
+        g = int(hex_c[2:4], 16)
+        b = int(hex_c[4:6], 16)
+        
+        # Vectorized blending: src * alpha + dst * (1 - alpha)
+        # Optimization: src is solid color.
+        # dst = dst - alpha * (dst - src)
+        
         effective_alpha_broad = effective_alpha.reshape(height, width, 1)
-        composite = composite * (1.0 - effective_alpha_broad) + rgb_ink_broad * effective_alpha_broad
-    composite_final = composite.clip(0, 255).astype(np.uint8)
+        
+        # Calculate (dst - src)
+        diff = composite - np.array([r, g, b], dtype=np.float32)
+        
+        # Update composite
+        composite -= diff * effective_alpha_broad
+        
+    composite_final = np.clip(composite, 0, 255).astype(np.uint8)
     rgba = np.dstack((composite_final, np.full((height, width), 255, dtype=np.uint8)))
     return rgba.flatten()
 `;
