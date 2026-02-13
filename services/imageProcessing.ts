@@ -149,28 +149,19 @@ def separate_colors_py(image_data, width, height, palette_hex_list, kl, kc, kh, 
                 layer_raw_values[i, start:end] = np.where(labels == i, 255.0, 0.0)
                 
         else: # 'raster' - SOFT MASKING
-            # Improved Soft Masking with Falloff and Gamma
             max_dist = 40.0 if method == 'ciede2000' else 100.0
-            
             min_dists = np.min(chunk_dists, axis=1)
             
             for i in range(num_colors):
                 d = chunk_dists[:, i]
-                # Normalized proximity [0..1], 1 is exact match
                 proximity = np.clip(1.0 - (d / max_dist), 0, 1)
-                
-                # Probability factor
                 prob_factor = np.clip(1.0 - (d - min_dists) / 10.0, 0, 1)
-                
                 alpha_norm = proximity * prob_factor
                 
-                # Apply Gamma
                 if gamma_val != 1.0:
                     alpha_norm = np.power(alpha_norm, gamma_val)
                 
-                # SOLID SNAPPING:
-                # If a pixel is very opaque (> 85%), force it to 100% solid.
-                # If very transparent (< 5%), force to 0% to reduce scum dots.
+                # SOLID SNAPPING (Keep this consistent with Halftoning)
                 alpha_norm = np.where(alpha_norm > 0.85, 1.0, alpha_norm)
                 alpha_norm = np.where(alpha_norm < 0.05, 0.0, alpha_norm)
                 
@@ -201,62 +192,42 @@ def apply_halftone_am_py(layer_data, width, height, lpi, angle_deg):
     arr = np.array(layer_data.to_py()).reshape(height, width, 4)
     alpha = arr[:, :, 3].astype(np.float32) / 255.0
     
-    # Grayscale Input (0=White, 1=Black Ink)
     ink_density = alpha
     
-    # --- OPTIMIZATION: SKIP SOLIDS AND CLEARS ---
-    # This prevents aliasing and "white dots" in 100% solid areas
-    # because we bypass the screen function entirely for perfect pixels.
-    # We still need to calculate the screen for the gradients.
-    
-    # Convert LPI to pixels per period (Wavelength)
+    # Calculate screen pattern
     wavelength = 300.0 / lpi 
-    
     theta = math.radians(angle_deg)
     cos_t = math.cos(theta)
     sin_t = math.sin(theta)
     
     y, x = np.indices((height, width))
-    
-    # Coordinate rotation
     x_rot = x * cos_t - y * sin_t
     y_rot = x * sin_t + y * cos_t
     
-    # Generate Euclidean Dot Pattern
-    # Formula: (Cos(x) + Cos(y)) / 2
-    # Result range: -1 to 1
-    # Peaks (1.0) are center of dots? 
-    # Actually: Cos(0) = 1. We want peaks to be black dots.
-    
     freq = 2.0 * math.pi / wavelength
     spot_func = (np.cos(x_rot * freq) + np.cos(y_rot * freq)) / 2.0
-    
-    # Normalize to 0..1
-    # -1 -> 0 (White)
-    #  1 -> 1 (Black center)
     screen_threshold = (spot_func + 1.0) / 2.0
     
     # Thresholding
-    # Standard: Ink > (1 - Screen)
-    # This creates the dot.
-    
-    # Strict Halftoning
     halftoned = ink_density > (1.0 - screen_threshold)
     
-    # --- FORCE SOLIDS ---
-    # If original alpha was > 98%, force True (Ink)
-    halftoned = np.logical_or(halftoned, ink_density > 98.0)
+    # --- REFINED CLEANUP ---
+    # 1. Aggressive Solid Snapping: Force >85% opacity to solid to eliminate pinholes
+    halftoned = np.logical_or(halftoned, ink_density > 0.85)
     
-    # --- FORCE CLEARS ---
-    # If original alpha was < 2%, force False (No Ink)
-    halftoned = np.logical_and(halftoned, ink_density > 0.02)
+    # 2. Aggressive Clear Snapping: Force <5% opacity to clear to eliminate scum dots
+    halftoned = np.logical_and(halftoned, ink_density > 0.05)
     
-    # --- OUTPUT ---
+    # 3. Morphological Despeckling: Remove 1-2 pixel noise
+    # Remove isolated black pixels (pepper noise)
+    halftoned = morphology.remove_small_objects(halftoned, min_size=3)
+    # Remove isolated white holes inside solids (salt noise)
+    halftoned = morphology.remove_small_holes(halftoned, area_threshold=3)
+    
     out = np.zeros((height, width, 4), dtype=np.uint8)
     out[..., :3] = 255 # White background
     out[..., 3] = 0    # Transparent
     
-    # Set Black Ink where halftoned is True
     out[halftoned, 0] = 0
     out[halftoned, 1] = 0
     out[halftoned, 2] = 0
@@ -267,13 +238,20 @@ def apply_halftone_am_py(layer_data, width, height, lpi, angle_deg):
 def apply_halftone_fm_py(layer_data, width, height):
     arr = np.array(layer_data.to_py()).reshape(height, width, 4)
     alpha = arr[:, :, 3]
+    
+    # Pre-clean input for FM to prevent noise in solids/clears
+    alpha = np.where(alpha > 230, 255, alpha) # >90% -> 100%
+    alpha = np.where(alpha < 13, 0, alpha)    # <5% -> 0%
+    
     grayscale_input = 255 - alpha
     img = Image.fromarray(grayscale_input, 'L')
     dithered = img.convert('1', dither=Image.FLOYDSTEINBERG)
     dithered_arr = np.array(dithered, dtype=np.uint8) * 255
+    
     out = np.zeros((height, width, 4), dtype=np.uint8)
     out[..., :3] = 255
     out[..., 3] = 0
+    
     ink_mask = (dithered_arr == 0)
     out[ink_mask, 0] = 0
     out[ink_mask, 1] = 0

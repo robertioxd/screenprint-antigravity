@@ -125,28 +125,39 @@ const App: React.FC = () => {
       setPalette([...palette, newColor]);
   };
 
+  // Update composite whenever layers or configs change
   useEffect(() => {
-    if (layers.length > 0 && originalImage && (activeTab === 'separation' || activeTab === 'halftone' || activeTab === 'compare')) {
+    if (originalImage && (activeTab === 'separation' || activeTab === 'halftone' || activeTab === 'compare')) {
         const updateComposite = async () => {
+            if (layers.length === 0) {
+                setCompositeImage(null);
+                return;
+            }
             const comp = await generateComposite(layers, originalImage.width, originalImage.height, advancedConfig);
             setCompositeImage(comp);
         };
         updateComposite();
     }
-  }, [advancedConfig.inkOpacity, layers]); // Added layers dependency to update when layers change
+  }, [advancedConfig.inkOpacity, layers, activeTab]);
 
   /* --- LAYER ACTIONS LOGIC --- */
   
   const handleLayerAction = (action: 'chop' | 'merge' | 'edit' | 'delete', layer: Layer) => {
       if (action === 'delete') {
-          if (confirm(`Are you sure you want to delete the ${layer.color.hex} channel?`)) {
-              const newLayers = layers.filter(l => l.id !== layer.id);
-              setLayers(newLayers);
+          // Use window.confirm for a synchronous block
+          if (window.confirm(`¿Estás seguro de que deseas eliminar permanentemente el canal ${layer.color.hex}?`)) {
+              // 1. Unmount the modal immediately to prevent it from accessing the deleted layer index
               setPreviewLayerIndex(null);
+              
+              // 2. Defer the state update to the next tick. 
+              // This ensures the render cycle completes the unmount BEFORE the layer array is modified.
+              setTimeout(() => {
+                  setLayers(prev => prev.filter(l => l.id !== layer.id));
+                  setPalette(prev => prev.filter(p => p.id !== layer.color.id));
+              }, 0);
           }
       } else {
           setModalMode(action);
-          // Preview index should already be set
       }
   };
 
@@ -166,18 +177,15 @@ const App: React.FC = () => {
       if (previewLayerIndex === null) return;
       const targetLayer = layers[previewLayerIndex];
       
-      // Merge Data
       const mergedData = mergeLayersData(targetLayer.data, layersToMerge.map(l => l.data));
       
-      // Create new layer
       const newLayer: Layer = {
-          id: targetLayer.id, // Keep ID
+          id: targetLayer.id,
           color: { ...targetLayer.color, hex: finalColorHex, rgb: hexToRgb(finalColorHex) },
           data: mergedData,
           visible: true
       };
       
-      // Update State: Replace target with new, remove others
       const idsToRemove = new Set(layersToMerge.map(l => l.id));
       const newLayerList = layers.filter(l => !idsToRemove.has(l.id)).map(l => {
           if (l.id === targetLayer.id) return newLayer;
@@ -191,46 +199,20 @@ const App: React.FC = () => {
   const handleChopGenerate = async (config: AdvancedConfig, count: number): Promise<Layer[]> => {
       if (previewLayerIndex === null) return [];
       const targetLayer = layers[previewLayerIndex];
-      
-      // 1. Prepare Image: Convert alpha channel to grayscale RGB image
       const grayData = createGrayscaleFromAlpha(targetLayer);
-      
-      // 2. Generate Palette: Since we are splitting 1 color, we should generate N shades?
-      // Actually, the separation engine needs a palette. 
-      // We can ask `analyzePalette` to find N dominant clusters in this grayscale representation.
       const subPalette = await analyzePalette(grayData, count, { ...config, sampleSize: 50000 });
-
-      // 3. Separate
       const separated = await performSeparation(grayData, subPalette, config);
-      
-      // 4. Return layers, but color them with the ORIGINAL layer color?
-      // No, usually when chopping, you want to keep the distinct shades to simulate gradient, 
-      // OR you want to split spatially. If spatially (Vector), colors might be similar.
-      // If simulated process, colors are shades.
-      // Let's keep the analyzed colors for preview (which are grays), 
-      // BUT for final application, the user might want them to be the original color?
-      // The prompt says "Generate Sublayers". Usually in screen print, you split a "Red" into "Dark Red" and "Light Red".
-      // So keeping the analyzed colors (shades of gray->black) implies opacity.
-      // Let's assume we map the generated gray-scale intensity back to the original color?
-      // Actually, standard behavior is finding density clusters. 
-      // Let's just return the separated layers as is (Grayscale/Black).
-      // The user can Edit Color later if they want specific tints.
-      // Wait, better UX: Tint them with the original color but varying opacity? 
-      // No, separation returns Alpha. 
-      // Let's assign the ORIGINAL Color to all sublayers for now, so they look like parts of the whole.
       
       return separated.map(l => ({
           ...l,
-          color: targetLayer.color // Inherit original color
+          color: targetLayer.color 
       }));
   };
 
-  // Corrected signature handling for Apply
   const handleChopApply = (keptLayers: Layer[], layersToMerge: Layer[]) => {
       if (previewLayerIndex === null) return;
       const targetLayer = layers[previewLayerIndex];
 
-      // 1. Merge the "unselected" layers if any
       let mergedResidue: Layer | null = null;
       if (layersToMerge && layersToMerge.length > 0) {
            const mergedData = mergeLayersData(layersToMerge[0].data, layersToMerge.slice(1).map(l => l.data));
@@ -242,8 +224,6 @@ const App: React.FC = () => {
            };
       }
 
-      // 2. Construct new layer list
-      // Replace the targetLayer with [...keptLayers, mergedResidue]
       const finalNewLayers: Layer[] = [];
       layers.forEach(l => {
           if (l.id === targetLayer.id) {
@@ -255,7 +235,7 @@ const App: React.FC = () => {
       });
       
       setLayers(finalNewLayers);
-      setPreviewLayerIndex(null); // Close modal as the original layer is gone
+      setPreviewLayerIndex(null);
       setModalMode('view');
   };
 
@@ -451,7 +431,7 @@ const App: React.FC = () => {
       </main>
       
       {/* LAYER MANAGEMENT MODALS */}
-      {previewLayerIndex !== null && modalMode === 'view' && (
+      {previewLayerIndex !== null && layers[previewLayerIndex] && modalMode === 'view' && (
           <LayerDetailModal 
             layer={layers[previewLayerIndex]}
             index={previewLayerIndex}
@@ -467,10 +447,8 @@ const App: React.FC = () => {
       )}
 
       {/* COMPLEX ACTION MODALS */}
-      {previewLayerIndex !== null && modalMode !== 'view' && (
+      {previewLayerIndex !== null && layers[previewLayerIndex] && modalMode !== 'view' && (
           <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-in fade-in duration-200" onClick={() => { if(modalMode !== 'chop') setModalMode('view'); }}>
-             {/* Note: Click outside handler for Chop might be annoying if generating takes time, so we block generic close for Chop/Merge usually, but here strict for simple UX */}
-             
              <div onClick={e => e.stopPropagation()} className="w-full flex justify-center">
                  {modalMode === 'chop' && (
                      <ChopModal 

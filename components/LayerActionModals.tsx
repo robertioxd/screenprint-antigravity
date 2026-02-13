@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { Layer, AdvancedConfig } from '../types';
 import Button from './Button';
 import LayerPreview from './LayerPreview';
-import { X, RefreshCw, Layers, Image as ImageIcon, Check, Trash2, MousePointer2, Scissors, PenTool, Eraser } from 'lucide-react';
+import { X, RefreshCw, Layers, Image as ImageIcon, Check, Trash2, MousePointer2, Scissors, PenTool, Eraser, ZoomIn, ZoomOut, MousePointerClick } from 'lucide-react';
 import { splitByLasso } from '../services/imageProcessing';
 
 /* --- CHOP MODAL --- */
@@ -25,12 +25,17 @@ export const ChopModal: React.FC<ChopModalProps> = ({ layer, onClose, onGenerate
     const [loading, setLoading] = useState(false);
 
     // Manual Mode State
-    const [manualLayers, setManualLayers] = useState<Layer[]>([{ ...layer, id: 'base-manual', visible: true }]); // Start with current layer
-    const [activeManualIndex, setActiveManualIndex] = useState(0); // Which layer we are chopping
+    const [manualLayers, setManualLayers] = useState<Layer[]>([{ ...layer, id: `manual-base-${Date.now()}`, visible: true }]); 
+    const [activeManualIndex, setActiveManualIndex] = useState(0); 
     const [lassoPoints, setLassoPoints] = useState<{x: number, y: number}[]>([]);
+    
+    // Manual Tools State
+    const [toolType, setToolType] = useState<'freehand' | 'polygon'>('freehand');
     const [isDrawing, setIsDrawing] = useState(false);
+    const [cursorPos, setCursorPos] = useState<{x: number, y: number} | null>(null);
+    const [zoom, setZoom] = useState(1.0);
+    
     const canvasRef = useRef<HTMLCanvasElement>(null);
-    const containerRef = useRef<HTMLDivElement>(null);
 
     // --- AUTO MODE HANDLERS ---
     const handleGenerate = async () => {
@@ -67,7 +72,6 @@ export const ChopModal: React.FC<ChopModalProps> = ({ layer, onClose, onGenerate
 
     // --- MANUAL MODE HANDLERS (LASSO) ---
 
-    // Draw logic for the manual editor
     useEffect(() => {
         if (mode !== 'manual' || !canvasRef.current) return;
         
@@ -77,48 +81,59 @@ export const ChopModal: React.FC<ChopModalProps> = ({ layer, onClose, onGenerate
         
         const targetLayer = manualLayers[activeManualIndex];
         
-        // 1. Draw the current active layer image
-        // We need to scale it to fit the canvas display if needed, but for simplicity here we assume 
-        // the canvas renders at image resolution (scaled via CSS).
-        // Best approach: Canvas internal resolution = Image resolution.
-        
-        canvas.width = targetLayer.data.width;
-        canvas.height = targetLayer.data.height;
+        // Ensure proper sizing
+        if (canvas.width !== targetLayer.data.width || canvas.height !== targetLayer.data.height) {
+            canvas.width = targetLayer.data.width;
+            canvas.height = targetLayer.data.height;
+        }
 
+        // Clear and Draw Base
         ctx.clearRect(0, 0, canvas.width, canvas.height);
-        
-        // Background checkerboard simulation if transparent (optional, expensive in loop)
-        // Draw the Image Data
         ctx.putImageData(targetLayer.data, 0, 0);
 
-        // 2. Draw Lasso Path
+        // Draw Lasso Overlay
         if (lassoPoints.length > 0) {
-            ctx.strokeStyle = '#00ff00'; // Green selection
-            ctx.lineWidth = 2;
-            ctx.setLineDash([5, 5]);
+            ctx.strokeStyle = '#00ff00';
+            ctx.lineWidth = 2 / zoom; // Maintain consistent visual width regardless of zoom
+            ctx.setLineDash([5 / zoom, 5 / zoom]);
+            
             ctx.beginPath();
             ctx.moveTo(lassoPoints[0].x, lassoPoints[0].y);
             for (let i = 1; i < lassoPoints.length; i++) {
                 ctx.lineTo(lassoPoints[i].x, lassoPoints[i].y);
             }
-            if (!isDrawing && lassoPoints.length > 2) {
-                ctx.closePath(); // Close it visually if done
+
+            // Rubber-band line for polygon mode
+            if (toolType === 'polygon' && cursorPos) {
+                 ctx.lineTo(cursorPos.x, cursorPos.y);
+            }
+
+            // Fill preview for freehand when mouse is released
+            if (toolType === 'freehand' && !isDrawing && lassoPoints.length > 2) {
+                ctx.closePath();
                 ctx.fillStyle = 'rgba(0, 255, 0, 0.2)';
                 ctx.fill();
             }
+            
             ctx.stroke();
+            
+            // Draw visual nodes for polygon mode (little squares)
+            if (toolType === 'polygon') {
+                ctx.fillStyle = '#00ff00';
+                lassoPoints.forEach(p => {
+                    ctx.fillRect(p.x - 3/zoom, p.y - 3/zoom, 6/zoom, 6/zoom);
+                });
+            }
         }
+    }, [mode, manualLayers, activeManualIndex, lassoPoints, isDrawing, cursorPos, zoom, toolType]);
 
-    }, [mode, manualLayers, activeManualIndex, lassoPoints, isDrawing]);
-
-    const getScaledCoordinates = (e: React.MouseEvent) => {
+    const getImageCoordinates = (e: React.MouseEvent) => {
         const canvas = canvasRef.current;
         if (!canvas) return { x: 0, y: 0 };
-        
         const rect = canvas.getBoundingClientRect();
+        // Determine the scale between the CSS size (which might be transformed) and internal pixels
         const scaleX = canvas.width / rect.width;
         const scaleY = canvas.height / rect.height;
-        
         return {
             x: (e.clientX - rect.left) * scaleX,
             y: (e.clientY - rect.top) * scaleY
@@ -127,247 +142,225 @@ export const ChopModal: React.FC<ChopModalProps> = ({ layer, onClose, onGenerate
 
     const handleMouseDown = (e: React.MouseEvent) => {
         if (mode !== 'manual') return;
-        setIsDrawing(true);
-        setLassoPoints([getScaledCoordinates(e)]);
+        const coords = getImageCoordinates(e);
+        if (toolType === 'freehand') {
+            setIsDrawing(true);
+            setLassoPoints([coords]);
+        } else {
+            // Polygon Mode: Add point on click
+            setLassoPoints(prev => [...prev, coords]);
+        }
     };
 
     const handleMouseMove = (e: React.MouseEvent) => {
-        if (!isDrawing) return;
-        setLassoPoints(prev => [...prev, getScaledCoordinates(e)]);
+        const coords = getImageCoordinates(e);
+        setCursorPos(coords);
+        if (toolType === 'freehand' && isDrawing) {
+            setLassoPoints(prev => [...prev, coords]);
+        }
     };
 
     const handleMouseUp = () => {
-        setIsDrawing(false);
-        // Automatically close path logic is visual, handled in render
+        if (toolType === 'freehand') setIsDrawing(false);
+    };
+    
+    const handleDoubleClick = (e: React.MouseEvent) => {
+         if (toolType === 'polygon') {
+             e.preventDefault();
+             // Stop rubber-band preview
+             setCursorPos(null);
+         }
     };
 
     const handleManualSplit = () => {
         if (lassoPoints.length < 3) return;
-        
         const targetLayer = manualLayers[activeManualIndex];
-        
-        // Use the new service function
         try {
             const [inside, outside] = splitByLasso(targetLayer.data, lassoPoints);
-            
-            // Create new layer objects
             const newLayerInside: Layer = {
                 id: `lasso-inside-${Date.now()}`,
                 color: targetLayer.color,
                 data: inside,
                 visible: true
             };
-            
             const newLayerOutside: Layer = {
                 id: `lasso-outside-${Date.now()}`,
                 color: targetLayer.color,
                 data: outside,
                 visible: true
             };
-
-            // Update state: Replace the active layer with 'Outside' (remaining), add 'Inside' as new layer
             const updatedLayers = [...manualLayers];
-            // Remove the original
             updatedLayers.splice(activeManualIndex, 1, newLayerOutside, newLayerInside);
-            
             setManualLayers(updatedLayers);
-            setLassoPoints([]); // Reset lasso
-            setActiveManualIndex(updatedLayers.length - 1); // Select the new "Inside" layer? Or stay on remaining?
-            // Let's stay on the "Outside" (Remaining) usually to keep cleaning, which is index `activeManualIndex` (now occupied by Outside)
-            setActiveManualIndex(activeManualIndex);
-
+            setLassoPoints([]); 
+            setActiveManualIndex(activeManualIndex); // Stay on outside layer
         } catch (err) {
             console.error(err);
-            alert("Failed to split layer");
+            alert("Error al dividir la capa");
         }
     };
 
     const handleManualDelete = () => {
          if (lassoPoints.length < 3) return;
-         // Logic similar to split, but we just discard the 'inside' part
          const targetLayer = manualLayers[activeManualIndex];
          const [, outside] = splitByLasso(targetLayer.data, lassoPoints);
-         
          const newLayerOutside: Layer = {
              ...targetLayer,
+             id: `manual-mod-${Date.now()}`,
              data: outside
          };
-         
          const updatedLayers = [...manualLayers];
          updatedLayers[activeManualIndex] = newLayerOutside;
          setManualLayers(updatedLayers);
          setLassoPoints([]);
     };
 
-    const handleApplyManual = () => {
-        // Return all manual layers as "Kept", none to merge (unless we implement merge logic here too)
-        onApply(manualLayers, []);
-    };
-
+    const handleApplyManual = () => onApply(manualLayers, []);
 
     return (
-        <div className="bg-gray-100 rounded-lg shadow-2xl w-full max-w-5xl flex flex-col overflow-hidden max-h-[95vh] h-[800px]">
+        <div className="bg-gray-100 rounded-lg shadow-2xl w-full max-w-6xl flex flex-col overflow-hidden max-h-[95vh] h-[850px]">
             <div className="bg-gray-200 px-4 py-2 border-b border-gray-300 flex justify-between items-center shrink-0">
                 <div className="flex gap-4">
                     <h3 className="text-lg font-bold text-gray-800 flex items-center gap-2">
                         <Scissors className="w-5 h-5" /> Chop / Split Layer
                     </h3>
                     <div className="flex bg-white rounded-lg p-1 border border-gray-300">
-                        <button 
-                            onClick={() => setMode('auto')}
-                            className={`px-3 py-1 rounded text-xs font-bold uppercase transition-colors ${mode === 'auto' ? 'bg-indigo-600 text-white shadow-sm' : 'text-gray-500 hover:bg-gray-100'}`}
-                        >
-                            Auto Separation
-                        </button>
-                        <button 
-                             onClick={() => setMode('manual')}
-                             className={`px-3 py-1 rounded text-xs font-bold uppercase transition-colors flex items-center gap-1 ${mode === 'manual' ? 'bg-indigo-600 text-white shadow-sm' : 'text-gray-500 hover:bg-gray-100'}`}
-                        >
-                            <PenTool className="w-3 h-3" /> Manual Lasso
-                        </button>
+                        <button onClick={() => setMode('auto')} className={`px-3 py-1 rounded text-xs font-bold uppercase transition-colors ${mode === 'auto' ? 'bg-indigo-600 text-white shadow-sm' : 'text-gray-500 hover:bg-gray-100'}`}>Auto</button>
+                        <button onClick={() => setMode('manual')} className={`px-3 py-1 rounded text-xs font-bold uppercase transition-colors flex items-center gap-1 ${mode === 'manual' ? 'bg-indigo-600 text-white shadow-sm' : 'text-gray-500 hover:bg-gray-100'}`}><PenTool className="w-3 h-3" /> Manual</button>
                     </div>
                 </div>
                 <button onClick={onClose}><X className="text-gray-500 hover:text-red-500" /></button>
             </div>
             
             {mode === 'auto' ? (
-                /* --- AUTO CONTENT (PREVIOUS UI) --- */
                 <div className="flex-1 flex flex-col min-h-0">
-                     <div className="p-4 bg-blue-50/50 border-b border-gray-200 text-sm text-gray-600 shrink-0">
-                        <strong>Auto-Split:</strong> Algorithmically divide this layer into sub-shades using color distance (CIEDE2000).
-                    </div>
+                    <div className="p-4 bg-blue-50/50 border-b border-gray-200 text-sm text-gray-600 shrink-0">Algorithmically divide using color distance (CIEDE2000).</div>
                     <div className="p-6 space-y-6 overflow-y-auto">
                          <div className="flex items-end gap-4 bg-white p-4 rounded-lg border border-gray-200 shadow-sm">
                             <div className="flex-1 space-y-2">
-                                <label className="text-xs font-bold text-gray-500 uppercase">Method</label>
-                                <select 
-                                    value={method} 
-                                    onChange={(e) => setMethod(e.target.value as any)}
-                                    className="w-full bg-gray-50 border border-gray-300 rounded p-2 text-gray-800 text-sm"
-                                >
-                                    <option value="vector">Vector (Hard Edges)</option>
-                                    <option value="raster">Raster (Gradients)</option>
+                                <label className="text-xs font-bold text-gray-500 uppercase">Metodo</label>
+                                <select value={method} onChange={(e) => setMethod(e.target.value as any)} className="w-full bg-gray-50 border border-gray-300 rounded p-2 text-gray-800 text-sm">
+                                    <option value="vector">Vector (Hard)</option>
+                                    <option value="raster">Raster (Soft)</option>
                                 </select>
                             </div>
-                            <div className="w-32 space-y-2">
-                                <label className="text-xs font-bold text-gray-500 uppercase">Count</label>
-                                <input 
-                                    type="number" min="2" max="6" 
-                                    value={sublayerCount}
-                                    onChange={(e) => setSublayerCount(parseInt(e.target.value))}
-                                    className="w-full bg-gray-50 border border-gray-300 rounded p-2 text-gray-800 text-sm"
-                                />
+                            <div className="w-24 space-y-2">
+                                <label className="text-xs font-bold text-gray-500 uppercase">Cantidad</label>
+                                <input type="number" min="2" max="6" value={sublayerCount} onChange={(e) => setSublayerCount(parseInt(e.target.value))} className="w-full bg-gray-50 border border-gray-300 rounded p-2 text-gray-800 text-sm"/>
                             </div>
-                            <Button onClick={handleGenerate} isLoading={loading} className="bg-indigo-600 hover:bg-indigo-700 h-10">
-                                <RefreshCw className="w-4 h-4 mr-2" /> Generate
-                            </Button>
+                            <Button onClick={handleGenerate} isLoading={loading} className="bg-indigo-600 hover:bg-indigo-700 h-10"><RefreshCw className="w-4 h-4 mr-2" /> Generar</Button>
                         </div>
                          {autoGeneratedLayers.length > 0 && (
                             <div className="grid grid-cols-3 gap-4 pb-4">
-                                {autoGeneratedLayers.map((sub, idx) => (
-                                    !deletedState[idx] && (
-                                        <div key={idx} className={`bg-white rounded-lg border-2 overflow-hidden transition-all relative group ${keepState[idx] ? 'border-indigo-500 shadow-md' : 'border-gray-200 opacity-60'}`}>
-                                            <div className="aspect-square bg-gray-100 relative">
-                                                <LayerPreview imageData={sub.data} width={sub.data.width} height={sub.data.height} tint={sub.color.hex} />
-                                            </div>
-                                            <div className="p-2 flex flex-col gap-2 border-t border-gray-100">
-                                                 <div className="flex justify-between items-center">
-                                                    <span className="text-[10px] font-bold text-gray-500">Sublayer {idx + 1}</span>
-                                                    <button onClick={() => { const d = [...deletedState]; d[idx] = true; setDeletedState(d); }} className="text-gray-300 hover:text-red-500"><Trash2 className="w-3 h-3"/></button>
-                                                </div>
-                                                <button 
-                                                    onClick={() => { const k = [...keepState]; k[idx] = !k[idx]; setKeepState(k); }}
-                                                    className={`w-full py-1 text-[10px] font-bold uppercase rounded flex items-center justify-center gap-1 ${keepState[idx] ? 'bg-indigo-100 text-indigo-700' : 'bg-gray-100 text-gray-500'}`}
-                                                >
-                                                    {keepState[idx] ? <Check className="w-3 h-3"/> : null} {keepState[idx] ? 'Keep' : 'Merge'}
-                                                </button>
-                                            </div>
+                                {autoGeneratedLayers.map((sub, idx) => !deletedState[idx] && (
+                                    <div key={idx} className={`bg-white rounded-lg border-2 overflow-hidden transition-all relative group ${keepState[idx] ? 'border-indigo-500 shadow-md' : 'border-gray-200 opacity-60'}`}>
+                                        <div className="aspect-square bg-gray-100 relative"><LayerPreview imageData={sub.data} width={sub.data.width} height={sub.data.height} tint={sub.color.hex} /></div>
+                                        <div className="p-2 flex flex-col gap-2 border-t border-gray-100">
+                                             <div className="flex justify-between items-center"><span className="text-[10px] font-bold text-gray-500">Sublayer {idx + 1}</span><button onClick={() => { const d = [...deletedState]; d[idx] = true; setDeletedState(d); }} className="text-gray-300 hover:text-red-500"><Trash2 className="w-3 h-3"/></button></div>
+                                            <button onClick={() => { const k = [...keepState]; k[idx] = !k[idx]; setKeepState(k); }} className={`w-full py-1 text-[10px] font-bold uppercase rounded flex items-center justify-center gap-1 ${keepState[idx] ? 'bg-indigo-100 text-indigo-700' : 'bg-gray-100 text-gray-500'}`}>{keepState[idx] ? <Check className="w-3 h-3"/> : null} {keepState[idx] ? 'Manten' : 'Unir'}</button>
                                         </div>
-                                    )
+                                    </div>
                                 ))}
                             </div>
                         )}
                     </div>
-                    <div className="bg-gray-200 p-4 border-t border-gray-300 flex justify-end gap-3 shrink-0">
-                        <Button variant="secondary" onClick={onClose} className="text-gray-700 bg-white border border-gray-300">Cancel</Button>
-                        <Button onClick={handleApplyAuto} disabled={autoGeneratedLayers.length === 0} className="bg-gray-800 text-white">Apply</Button>
-                    </div>
+                    <div className="bg-gray-200 p-4 border-t border-gray-300 flex justify-end gap-3 shrink-0"><Button variant="secondary" onClick={onClose}>Cancelar</Button><Button onClick={handleApplyAuto} disabled={autoGeneratedLayers.length === 0} className="bg-gray-800 text-white">Aplicar</Button></div>
                 </div>
             ) : (
-                /* --- MANUAL CONTENT (LASSO) --- */
                 <div className="flex-1 flex flex-col min-h-0 bg-gray-900">
-                     <div className="p-2 bg-gray-800 border-b border-gray-700 text-xs text-gray-400 flex items-center justify-between shrink-0">
+                     <div className="p-2 bg-gray-800 border-b border-gray-700 text-xs text-gray-400 flex items-center justify-between shrink-0 h-14">
                          <div className="flex items-center gap-4">
-                            <span className="flex items-center gap-2"><MousePointer2 className="w-3 h-3" /> Draw selection to cut/delete</span>
-                            <div className="h-4 w-px bg-gray-600"></div>
-                            <span className="text-yellow-500 font-bold">Active: {activeManualIndex + 1}/{manualLayers.length}</span>
+                            {/* ZOOM CONTROLLER */}
+                            <div className="flex items-center gap-2 bg-gray-700 rounded-lg px-3 py-1.5 border border-gray-600 shadow-inner">
+                                <ZoomOut className="w-3 h-3 text-gray-400"/>
+                                <input 
+                                    type="range" 
+                                    min="1.0" 
+                                    max="5.0" 
+                                    step="0.1" 
+                                    value={zoom} 
+                                    onChange={(e) => setZoom(parseFloat(e.target.value))} 
+                                    className="w-24 h-1.5 bg-gray-600 rounded-lg appearance-none cursor-pointer accent-blue-500"
+                                />
+                                <ZoomIn className="w-3 h-3 text-gray-400"/>
+                                <span className="text-[10px] font-mono w-8 text-right text-blue-400 font-bold">{Math.round(zoom * 100)}%</span>
+                            </div>
+
+                            {/* TOOL TOGGLE */}
+                            <div className="flex bg-gray-700 rounded-lg p-1 border border-gray-600">
+                                <button 
+                                    onClick={() => { setToolType('freehand'); setLassoPoints([]); }} 
+                                    className={`flex items-center gap-1 px-3 py-1.5 rounded-md text-[10px] uppercase font-bold transition-all ${toolType === 'freehand' ? 'bg-blue-600 text-white shadow-lg' : 'hover:bg-gray-600'}`}
+                                >
+                                    <PenTool className="w-3 h-3" /> Mano Alzada
+                                </button>
+                                <button 
+                                    onClick={() => { setToolType('polygon'); setLassoPoints([]); }} 
+                                    className={`flex items-center gap-1 px-3 py-1.5 rounded-md text-[10px] uppercase font-bold transition-all ${toolType === 'polygon' ? 'bg-blue-600 text-white shadow-lg' : 'hover:bg-gray-600'}`}
+                                >
+                                    <MousePointerClick className="w-3 h-3" /> Poligonal
+                                </button>
+                            </div>
+
+                            <Button 
+                                size="sm" 
+                                variant="ghost" 
+                                onClick={() => setLassoPoints([])} 
+                                disabled={lassoPoints.length === 0}
+                                className="text-[10px] uppercase font-bold h-8 px-2"
+                            >
+                                Limpiar Puntos
+                            </Button>
                          </div>
                          <div className="flex gap-2">
-                             <Button size="sm" variant="secondary" disabled={lassoPoints.length < 3} onClick={handleManualDelete} className="text-xs py-1 h-7 bg-red-900/50 hover:bg-red-800 border-red-800 text-red-200">
-                                 <Eraser className="w-3 h-3 mr-1" /> Delete Area
-                             </Button>
-                             <Button size="sm" variant="primary" disabled={lassoPoints.length < 3} onClick={handleManualSplit} className="text-xs py-1 h-7 bg-blue-600 hover:bg-blue-500">
-                                 <Scissors className="w-3 h-3 mr-1" /> Split to New Layer
-                             </Button>
+                             <Button size="sm" variant="secondary" disabled={lassoPoints.length < 3} onClick={handleManualDelete} className="text-[10px] py-1 h-9 bg-red-900/50 hover:bg-red-800 border-red-800 text-red-200"><Eraser className="w-3 h-3 mr-1" /> Borrar Área</Button>
+                             <Button size="sm" variant="primary" disabled={lassoPoints.length < 3} onClick={handleManualSplit} className="text-[10px] py-1 h-9 bg-blue-600 hover:bg-blue-500 shadow-lg shadow-blue-900/40 font-black"><Scissors className="w-3 h-3 mr-1" /> Dividir Capa</Button>
                          </div>
                     </div>
 
                     <div className="flex-1 flex overflow-hidden">
-                        {/* LEFT: CANVAS EDITOR */}
-                        <div className="flex-1 relative bg-[url('https://www.transparenttextures.com/patterns/checkerboard.png')] bg-gray-800 overflow-auto flex items-center justify-center p-8" ref={containerRef}>
-                            <canvas 
-                                ref={canvasRef}
-                                onMouseDown={handleMouseDown}
-                                onMouseMove={handleMouseMove}
-                                onMouseUp={handleMouseUp}
-                                className="shadow-2xl cursor-crosshair border border-gray-600 max-w-none"
+                        <div className="flex-1 relative bg-[url('https://www.transparenttextures.com/patterns/checkerboard.png')] bg-gray-800 overflow-auto flex items-start justify-center p-12 custom-scrollbar">
+                            <div 
                                 style={{ 
-                                    // We let CSS handle scaling for view, but ideally we should control zoom
-                                    maxHeight: '100%',
-                                    maxWidth: '100%'
-                                }}
-                            />
+                                    transform: `scale(${zoom})`, 
+                                    transformOrigin: 'top center',
+                                }} 
+                                className="transition-transform duration-100 ease-out"
+                            >
+                                <canvas 
+                                    ref={canvasRef} 
+                                    onMouseDown={handleMouseDown} 
+                                    onMouseMove={handleMouseMove} 
+                                    onMouseUp={handleMouseUp} 
+                                    onDoubleClick={handleDoubleClick} 
+                                    className="shadow-2xl cursor-crosshair border border-gray-600 max-w-none bg-black/20" 
+                                    style={{ 
+                                        imageRendering: zoom > 1.2 ? 'pixelated' : 'auto' 
+                                    }}
+                                />
+                            </div>
                         </div>
 
-                        {/* RIGHT: LAYER LIST */}
-                        <div className="w-48 bg-gray-800 border-l border-gray-700 flex flex-col">
-                            <div className="p-2 text-xs font-bold text-gray-500 uppercase tracking-wider bg-gray-900">Working Layers</div>
-                            <div className="flex-1 overflow-y-auto p-2 space-y-2">
+                        <div className="w-52 bg-gray-800 border-l border-gray-700 flex flex-col flex-shrink-0 z-10">
+                            <div className="p-3 text-[10px] font-black text-gray-500 uppercase tracking-widest bg-gray-900 border-b border-gray-700">Capas de Trabajo</div>
+                            <div className="flex-1 overflow-y-auto p-3 space-y-3 custom-scrollbar">
                                 {manualLayers.map((l, idx) => (
                                     <div 
-                                        key={idx} 
-                                        onClick={() => { setActiveManualIndex(idx); setLassoPoints([]); }}
-                                        className={`p-2 rounded border cursor-pointer transition-all ${activeManualIndex === idx ? 'bg-blue-600/20 border-blue-500' : 'bg-gray-700 border-gray-600 opacity-60 hover:opacity-100'}`}
+                                        key={l.id} 
+                                        onClick={() => { setActiveManualIndex(idx); setLassoPoints([]); }} 
+                                        className={`p-2 rounded-lg border-2 cursor-pointer transition-all ${activeManualIndex === idx ? 'bg-blue-600/20 border-blue-500 shadow-lg scale-[1.02]' : 'bg-gray-700 border-gray-600 opacity-60 hover:opacity-100'}`}
                                     >
-                                        <div className="aspect-video bg-gray-900 mb-1 rounded overflow-hidden pointer-events-none">
-                                            <LayerPreview imageData={l.data} width={l.data.width} height={l.data.height} tint={l.color.hex} />
-                                        </div>
+                                        <div className="aspect-video bg-gray-900 mb-2 rounded overflow-hidden pointer-events-none border border-white/5"><LayerPreview imageData={l.data} width={l.data.width} height={l.data.height} tint={l.color.hex} /></div>
                                         <div className="flex justify-between items-center">
-                                            <span className="text-[10px] text-gray-300 font-mono truncate w-20">Part {idx+1}</span>
-                                            {manualLayers.length > 1 && (
-                                                <button 
-                                                    onClick={(e) => {
-                                                        e.stopPropagation();
-                                                        const remaining = manualLayers.filter((_, i) => i !== idx);
-                                                        setManualLayers(remaining);
-                                                        setActiveManualIndex(0);
-                                                    }}
-                                                    className="text-gray-500 hover:text-red-400"
-                                                >
-                                                    <X className="w-3 h-3"/>
-                                                </button>
-                                            )}
+                                            <span className="text-[10px] text-gray-400 font-bold uppercase">Pieza {idx+1}</span>
+                                            {manualLayers.length > 1 && (<button onClick={(e) => { e.stopPropagation(); setManualLayers(prev => prev.filter((_, i) => i !== idx)); setActiveManualIndex(0); }} className="text-gray-500 hover:text-red-400 p-1"><Trash2 className="w-3 h-3"/></button>)}
                                         </div>
                                     </div>
                                 ))}
                             </div>
                         </div>
                     </div>
-
-                    <div className="bg-gray-800 p-3 border-t border-gray-700 flex justify-end gap-3 shrink-0">
-                         <Button variant="secondary" onClick={onClose} className="text-gray-400 hover:text-white">Cancel</Button>
-                         <Button onClick={handleApplyManual} className="bg-green-600 hover:bg-green-500 text-white">Confirm Changes</Button>
-                    </div>
+                    <div className="bg-gray-800 p-3 border-t border-gray-700 flex justify-end gap-3 shrink-0 z-10"><Button variant="ghost" onClick={onClose} className="text-gray-400 hover:text-white">Cancelar</Button><Button onClick={handleApplyManual} className="bg-green-600 hover:bg-green-500 text-white shadow-lg shadow-green-900/20 px-6 font-bold">Confirmar Cambios</Button></div>
                 </div>
             )}
         </div>
@@ -385,104 +378,42 @@ interface MergeModalProps {
 export const MergeModal: React.FC<MergeModalProps> = ({ targetLayer, allLayers, onClose, onMerge }) => {
     const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
     const [finalColorHex, setFinalColorHex] = useState<string>(targetLayer.color.hex);
-    
-    // Filter out the current layer from the list
     const otherLayers = allLayers.filter(l => l.id !== targetLayer.id);
-
     const toggleLayer = (id: string) => {
         const newSet = new Set(selectedIds);
         if (newSet.has(id)) newSet.delete(id);
         else newSet.add(id);
         setSelectedIds(newSet);
     };
-
-    const handleMerge = () => {
-        const layersToMerge = otherLayers.filter(l => selectedIds.has(l.id));
-        onMerge(layersToMerge, finalColorHex);
-    };
-
     return (
         <div className="bg-gray-100 rounded-lg shadow-2xl w-full max-w-4xl flex flex-col overflow-hidden max-h-[90vh]">
-             <div className="bg-gray-200 p-4 border-b border-gray-300 flex justify-between items-center">
-                <h3 className="text-lg font-bold text-gray-800">Merge Layers with {targetLayer.color.hex}</h3>
-                <button onClick={onClose}><X className="text-gray-500 hover:text-red-500" /></button>
-            </div>
-             <div className="p-6 bg-yellow-50/50 border-b border-gray-200 text-sm text-gray-600">
-                <strong>Instructions:</strong> Select layers to merge with the current layer. The selected layers will be combined into a single layer. Select which color the final layer should take.
-            </div>
-
-            <div className="p-6 grid grid-cols-2 gap-8">
-                {/* Left: Layer Selection */}
+             <div className="bg-gray-200 p-4 border-b border-gray-300 flex justify-between items-center"><h3 className="text-lg font-bold text-gray-800">Merge Layers with {targetLayer.color.hex}</h3><button onClick={onClose}><X className="text-gray-500 hover:text-red-500" /></button></div>
+             <div className="p-4 bg-yellow-50/50 border-b border-gray-200 text-xs text-gray-600">Select layers to merge with the current layer.</div>
+             <div className="p-6 grid grid-cols-2 gap-8">
                 <div className="space-y-4">
-                     <h4 className="text-xs font-bold text-gray-500 uppercase">Select Layers to Merge</h4>
-                     <div className="grid grid-cols-2 gap-3 max-h-96 overflow-y-auto">
+                     <h4 className="text-xs font-bold text-gray-500 uppercase">Select Layers</h4>
+                     <div className="grid grid-cols-2 gap-3 max-h-96 overflow-y-auto pr-2 custom-scrollbar">
                         {otherLayers.map(layer => (
-                            <div 
-                                key={layer.id} 
-                                onClick={() => toggleLayer(layer.id)}
-                                className={`cursor-pointer rounded-lg border-2 p-3 transition-all ${selectedIds.has(layer.id) ? 'border-indigo-500 bg-indigo-50' : 'border-gray-200 bg-white hover:border-gray-300'}`}
-                            >
-                                <div className="aspect-video bg-gray-100 mb-2 rounded overflow-hidden">
-                                     <LayerPreview imageData={layer.data} width={layer.data.width} height={layer.data.height} tint={layer.color.hex} />
-                                </div>
-                                <div className="text-center">
-                                    <div className="w-3 h-3 rounded-full inline-block mr-2" style={{backgroundColor: layer.color.hex}}></div>
-                                    <span className="text-xs font-mono font-bold text-gray-600">{layer.color.hex}</span>
-                                </div>
+                            <div key={layer.id} onClick={() => toggleLayer(layer.id)} className={`cursor-pointer rounded-lg border-2 p-2 transition-all ${selectedIds.has(layer.id) ? 'border-indigo-500 bg-indigo-50' : 'border-gray-200 bg-white hover:border-gray-300'}`}>
+                                <div className="aspect-video bg-gray-100 mb-2 rounded overflow-hidden"><LayerPreview imageData={layer.data} width={layer.data.width} height={layer.data.height} tint={layer.color.hex} /></div>
+                                <div className="text-center"><div className="w-2 h-2 rounded-full inline-block mr-1" style={{backgroundColor: layer.color.hex}}></div><span className="text-[10px] font-mono font-bold text-gray-600">{layer.color.hex}</span></div>
                             </div>
                         ))}
                      </div>
                 </div>
-
-                {/* Right: Color Selection */}
                 <div className="space-y-4">
-                    <h4 className="text-xs font-bold text-gray-500 uppercase">Final Layer Color</h4>
+                    <h4 className="text-xs font-bold text-gray-500 uppercase">Final Color</h4>
                     <div className="space-y-2">
-                        {/* Current Layer Option */}
-                        <label className={`flex items-center gap-3 p-3 rounded border cursor-pointer ${finalColorHex === targetLayer.color.hex ? 'bg-white border-indigo-500 shadow-sm' : 'border-transparent hover:bg-gray-200'}`}>
-                            <input 
-                                type="radio" 
-                                name="finalColor" 
-                                checked={finalColorHex === targetLayer.color.hex} 
-                                onChange={() => setFinalColorHex(targetLayer.color.hex)}
-                                className="text-indigo-600"
-                            />
-                            <div className="w-6 h-6 rounded border border-gray-300" style={{backgroundColor: targetLayer.color.hex}}></div>
-                            <span className="text-sm font-bold text-gray-700">Current ({targetLayer.color.hex})</span>
-                        </label>
-
-                        {/* Selected Layers Options */}
+                        <label className={`flex items-center gap-3 p-3 rounded border cursor-pointer ${finalColorHex === targetLayer.color.hex ? 'bg-white border-indigo-500 shadow-sm' : 'border-transparent hover:bg-gray-200'}`}><input type="radio" name="finalColor" checked={finalColorHex === targetLayer.color.hex} onChange={() => setFinalColorHex(targetLayer.color.hex)}/><div className="w-6 h-6 rounded border border-gray-300" style={{backgroundColor: targetLayer.color.hex}}></div><span className="text-sm font-bold text-gray-700">Actual ({targetLayer.color.hex})</span></label>
                         {Array.from(selectedIds).map(id => {
                             const l = otherLayers.find(ol => ol.id === id);
                             if (!l) return null;
-                            return (
-                                <label key={l.id} className={`flex items-center gap-3 p-3 rounded border cursor-pointer ${finalColorHex === l.color.hex ? 'bg-white border-indigo-500 shadow-sm' : 'border-transparent hover:bg-gray-200'}`}>
-                                    <input 
-                                        type="radio" 
-                                        name="finalColor" 
-                                        checked={finalColorHex === l.color.hex} 
-                                        onChange={() => setFinalColorHex(l.color.hex)}
-                                        className="text-indigo-600"
-                                    />
-                                    <div className="w-6 h-6 rounded border border-gray-300" style={{backgroundColor: l.color.hex}}></div>
-                                    <span className="text-sm font-bold text-gray-700">Merge Target ({l.color.hex})</span>
-                                </label>
-                            );
+                            return (<label key={l.id} className={`flex items-center gap-3 p-3 rounded border cursor-pointer ${finalColorHex === l.color.hex ? 'bg-white border-indigo-500 shadow-sm' : 'border-transparent hover:bg-gray-200'}`}><input type="radio" name="finalColor" checked={finalColorHex === l.color.hex} onChange={() => setFinalColorHex(l.color.hex)}/><div className="w-6 h-6 rounded border border-gray-300" style={{backgroundColor: l.color.hex}}></div><span className="text-sm font-bold text-gray-700">Destino ({l.color.hex})</span></label>);
                         })}
                     </div>
                 </div>
             </div>
-
-            <div className="bg-gray-200 p-4 border-t border-gray-300 flex justify-end gap-3 mt-auto">
-                <Button variant="secondary" onClick={onClose} className="text-gray-700 bg-white border border-gray-300 hover:bg-gray-50">Cancel</Button>
-                <Button 
-                    onClick={handleMerge} 
-                    disabled={selectedIds.size === 0} 
-                    className="bg-gray-800 text-white hover:bg-gray-700"
-                >
-                    Merge Selected Layers
-                </Button>
-            </div>
+            <div className="bg-gray-200 p-4 border-t border-gray-300 flex justify-end gap-3 mt-auto"><Button variant="secondary" onClick={onClose}>Cancelar</Button><Button onClick={() => onMerge(otherLayers.filter(l => selectedIds.has(l.id)), finalColorHex)} disabled={selectedIds.size === 0} className="bg-gray-800 text-white">Merge Selected</Button></div>
         </div>
     );
 };
@@ -496,48 +427,15 @@ interface EditColorModalProps {
 
 export const EditColorModal: React.FC<EditColorModalProps> = ({ layer, onClose, onSave }) => {
     const [hex, setHex] = useState(layer.color.hex);
-
     return (
         <div className="bg-gray-100 rounded-lg shadow-2xl w-full max-w-md flex flex-col overflow-hidden">
-            <div className="bg-gray-200 p-4 border-b border-gray-300 flex justify-between items-center">
-                <h3 className="text-lg font-bold text-gray-800">Edit Layer Color</h3>
-                <button onClick={onClose}><X className="text-gray-500 hover:text-red-500" /></button>
+            <div className="bg-gray-200 p-4 border-b border-gray-300 flex justify-between items-center"><h3 className="text-lg font-bold text-gray-800">Edit Layer Color</h3><button onClick={onClose}><X className="text-gray-500 hover:text-red-500" /></button></div>
+            <div className="p-6 space-y-4">
+                <input type="color" value={hex} onChange={(e) => setHex(e.target.value)} className="w-full h-12 p-1 bg-white border border-gray-300 rounded cursor-pointer"/>
+                <input type="text" value={hex} onChange={(e) => setHex(e.target.value)} className="w-full p-2 bg-white border border-gray-300 rounded font-mono text-gray-800 uppercase text-center font-bold"/>
+                <div className="bg-black p-4 rounded text-center"><div className="w-full h-8 rounded shadow-inner" style={{backgroundColor: hex}}></div><span className="text-[10px] mt-2 block font-bold" style={{color: hex}}>PREVIEW COLOR ON BLACK</span></div>
             </div>
-             <div className="p-4 bg-purple-50/50 border-b border-gray-200 text-xs text-gray-600">
-                <strong>Instructions:</strong> Change the color of this layer. The change will be applied to both the layer and the separated image.
-            </div>
-            
-            <div className="p-6 space-y-6">
-                <div className="flex flex-col gap-2">
-                     <label className="text-xs font-bold text-gray-500 uppercase">Color Picker</label>
-                     <input 
-                        type="color" 
-                        value={hex} 
-                        onChange={(e) => setHex(e.target.value)} 
-                        className="w-full h-12 p-1 bg-white border border-gray-300 rounded cursor-pointer"
-                    />
-                </div>
-                <div className="flex flex-col gap-2">
-                     <label className="text-xs font-bold text-gray-500 uppercase">Hex Color</label>
-                     <input 
-                        type="text" 
-                        value={hex} 
-                        onChange={(e) => setHex(e.target.value)} 
-                        className="w-full p-2 bg-white border border-gray-300 rounded font-mono text-gray-800"
-                    />
-                </div>
-                <div className="bg-black p-4 rounded text-center">
-                    <span className="text-white font-bold" style={{color: hex}}>Preview Text on Black</span>
-                    <div className="w-full h-8 mt-2 rounded" style={{backgroundColor: hex}}></div>
-                </div>
-            </div>
-
-            <div className="bg-gray-200 p-4 border-t border-gray-300 flex justify-end gap-3">
-                <Button variant="secondary" onClick={onClose} className="text-gray-700 bg-white border border-gray-300 hover:bg-gray-50">Cancel</Button>
-                <Button onClick={() => onSave(hex)} className="bg-fuchsia-700 text-white hover:bg-fuchsia-800">
-                    Apply Color Change
-                </Button>
-            </div>
+            <div className="bg-gray-200 p-4 border-t border-gray-300 flex justify-end gap-3"><Button variant="secondary" onClick={onClose}>Cancelar</Button><Button onClick={() => onSave(hex)} className="bg-indigo-600 text-white">Guardar</Button></div>
         </div>
     );
 };
