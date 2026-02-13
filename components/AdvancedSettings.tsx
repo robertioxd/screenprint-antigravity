@@ -1,6 +1,6 @@
 import React from 'react';
 import { AdvancedConfig } from '../types';
-import { Settings2, Info, Calculator, Eye, Layers, Image as ImageIcon, Eraser, Scissors, Grid3X3, Sun } from 'lucide-react';
+import { Settings2, Info, Calculator, Eye, Layers, Image as ImageIcon, Eraser, Scissors, Grid3X3, Sun, Wand2, Ghost, Sparkles, Feather } from 'lucide-react';
 
 interface AdvancedSettingsProps {
   config: AdvancedConfig;
@@ -10,7 +10,7 @@ interface AdvancedSettingsProps {
 }
 
 const AdvancedSettings: React.FC<AdvancedSettingsProps> = ({ config, onChange, isOpen, onToggle }) => {
-  const updateField = (field: keyof AdvancedConfig, value: number | string) => {
+  const updateField = (field: keyof AdvancedConfig, value: number | string | boolean) => {
     onChange({ ...config, [field]: value });
   };
 
@@ -53,6 +53,46 @@ const AdvancedSettings: React.FC<AdvancedSettingsProps> = ({ config, onChange, i
                 </button>
               </div>
 
+              {/* Sub-settings based on Type */}
+              {config.separationType === 'vector' ? (
+                 <div className="bg-gray-800 p-2 rounded border border-gray-700 mb-2">
+                    <label className="flex items-center justify-between cursor-pointer">
+                        <span className="text-gray-400 flex items-center gap-1.5">
+                            <Wand2 className="w-3 h-3 text-blue-400" /> 
+                            Anti-Aliasing
+                        </span>
+                        <div className="relative inline-block w-8 h-4 align-middle select-none transition duration-200 ease-in">
+                            <input 
+                                type="checkbox" 
+                                checked={config.useVectorAntiAliasing} 
+                                onChange={(e) => updateField('useVectorAntiAliasing', e.target.checked)} 
+                                className="toggle-checkbox absolute block w-4 h-4 rounded-full bg-white border-4 appearance-none cursor-pointer checked:right-0 checked:border-blue-600 right-4 border-gray-300"
+                            />
+                            <label className={`toggle-label block overflow-hidden h-4 rounded-full cursor-pointer ${config.useVectorAntiAliasing ? 'bg-blue-600' : 'bg-gray-600'}`}></label>
+                        </div>
+                    </label>
+                    <p className="text-[9px] text-gray-500 mt-1 pl-5">Suaviza los bordes dentados (Gaussian Blur).</p>
+                 </div>
+              ) : (
+                <div className="bg-gray-800 p-2 rounded border border-gray-700 mb-2 space-y-3">
+                    <label className="flex items-center justify-between cursor-pointer">
+                        <span className="text-gray-400 flex items-center gap-1.5">
+                            <Calculator className="w-3 h-3 text-green-400" /> 
+                            Adaptive Threshold
+                        </span>
+                        <div className="relative inline-block w-8 h-4 align-middle select-none transition duration-200 ease-in">
+                            <input 
+                                type="checkbox" 
+                                checked={config.useRasterAdaptive} 
+                                onChange={(e) => updateField('useRasterAdaptive', e.target.checked)} 
+                                className="toggle-checkbox absolute block w-4 h-4 rounded-full bg-white border-4 appearance-none cursor-pointer checked:right-0 checked:border-green-600 right-4 border-gray-300"
+                            />
+                            <label className={`toggle-label block overflow-hidden h-4 rounded-full cursor-pointer ${config.useRasterAdaptive ? 'bg-green-600' : 'bg-gray-600'}`}></label>
+                        </div>
+                    </label>
+                 </div>
+              )}
+
               <div className="grid grid-cols-2 gap-2 mb-3">
                 <button 
                     onClick={() => updateField('separationMethod', 'ciede2000')}
@@ -88,39 +128,56 @@ const AdvancedSettings: React.FC<AdvancedSettingsProps> = ({ config, onChange, i
           </div>
 
           {/* SECCIÓN 2: LIMPIEZA (POST-PROCESO) */}
-          <div className="space-y-3 pb-3 border-b border-gray-700">
+          <div className="space-y-4 pb-3 border-b border-gray-700">
              <label className="text-gray-400 font-bold uppercase flex items-center gap-1">
                 2. Limpieza y Refinamiento
                 <span title="Post-proceso para eliminar ruido y limpiar bordes."><Eraser className="w-3 h-3 opacity-50" /></span>
              </label>
 
+             {/* CLEANUP STRENGTH */}
              <div className="space-y-1">
                 <div className="flex justify-between text-gray-400">
-                    <span className="flex items-center gap-1"><Eraser className="w-3 h-3"/> Speckle (Ruido)</span>
-                    <span className="text-blue-400 font-mono">{config.speckleSize}px</span>
+                    <span className="flex items-center gap-1"><Sparkles className="w-3 h-3 text-yellow-400"/> Limpieza Inteligente</span>
+                    <span className="text-blue-400 font-mono">{config.cleanupStrength}/10</span>
                 </div>
                 <input 
-                  type="range" min="0" max="50" step="1" 
-                  value={config.speckleSize}
-                  onChange={(e) => updateField('speckleSize', parseInt(e.target.value))}
+                  type="range" min="0" max="10" step="1" 
+                  value={config.cleanupStrength}
+                  onChange={(e) => updateField('cleanupStrength', parseInt(e.target.value))}
                   className="w-full h-1 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-blue-500"
-                  title="Elimina grupos de píxeles menores a este tamaño"
+                  title="Elimina 'ruido' relativo al tamaño de la capa (0-10)"
                 />
              </div>
 
+             {/* SMOOTH EDGES */}
              <div className="space-y-1">
                 <div className="flex justify-between text-gray-400">
-                    <span className="flex items-center gap-1"><Scissors className="w-3 h-3"/> Erosión de Bordes</span>
-                    <span className="text-blue-400 font-mono">{config.erosionAmount}</span>
+                    <span className="flex items-center gap-1"><Feather className="w-3 h-3 text-purple-400"/> Suavizado Bordes</span>
+                    <span className="text-blue-400 font-mono">{config.smoothEdges}/5</span>
                 </div>
                 <input 
                   type="range" min="0" max="5" step="1" 
-                  value={config.erosionAmount}
-                  onChange={(e) => updateField('erosionAmount', parseInt(e.target.value))}
+                  value={config.smoothEdges}
+                  onChange={(e) => updateField('smoothEdges', parseInt(e.target.value))}
                   className="w-full h-1 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-blue-500"
-                  title="Adelgaza los bordes para reducir la ganancia de punto"
+                  title="Gaussian Blur para suavizar bordes pixelados"
                 />
              </div>
+
+             {/* MIN COVERAGE */}
+             <div className="space-y-1">
+                <div className="flex justify-between text-gray-400">
+                    <span className="flex items-center gap-1"><Ghost className="w-3 h-3 text-red-400"/> Cobertura Mínima</span>
+                    <span className="text-blue-400 font-mono">{config.minCoverage.toFixed(1)}%</span>
+                </div>
+                <input 
+                    type="range" min="0" max="5" step="0.1" 
+                    value={config.minCoverage}
+                    onChange={(e) => updateField('minCoverage', parseFloat(e.target.value))}
+                    className="w-full h-1 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-blue-500"
+                    title="Descarta capas que tengan menos del X% de cobertura total"
+                />
+            </div>
           </div>
 
           {/* SECCIÓN 3: HALFTONING */}
@@ -152,11 +209,12 @@ const AdvancedSettings: React.FC<AdvancedSettingsProps> = ({ config, onChange, i
                             <span>LPI (Líneas/Pulgada)</span>
                             <span className="text-blue-400 font-mono">{config.halftoneLpi}</span>
                         </div>
+                        
                         <input 
-                        type="range" min="10" max="85" step="5" 
-                        value={config.halftoneLpi}
-                        onChange={(e) => updateField('halftoneLpi', parseInt(e.target.value))}
-                        className="w-full h-1 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-blue-500"
+                            type="range" min="15" max="150" step="1" 
+                            value={config.halftoneLpi}
+                            onChange={(e) => updateField('halftoneLpi', parseInt(e.target.value))}
+                            className="w-full h-1 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-blue-500"
                         />
                     </div>
                     <div className="space-y-1">

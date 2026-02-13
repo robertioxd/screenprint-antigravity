@@ -26,10 +26,24 @@ export interface AdvancedConfig {
   kH: number;
   separationMethod: 'ciede2000' | 'euclidean';
   separationType: 'vector' | 'raster';
-  // New Cleanup Parameters
-  speckleSize: number; // Area in pixels to remove
-  erosionAmount: number; // 0 to 5, strength of edge refinement
-  // New Halftone Parameters
+  
+  // Output Size & Resolution
+  outputDpi: number;
+  outputSizeInches: number;
+  outputMeasurement: 'width' | 'height';
+
+  // Vector Specific
+  useVectorAntiAliasing: boolean;
+
+  // Raster Specific
+  useRasterAdaptive: boolean;
+
+  // Cleanup Parameters
+  cleanupStrength: number; // 0-10: Relative area-based removal
+  smoothEdges: number;     // 0-5: Gaussian blur edge refinement
+  minCoverage: number;     // 0-5%: Drops layers with low content
+
+  // Halftone Parameters
   halftoneType: 'fm' | 'am'; // FM = Dithering, AM = Lines/Dots
   halftoneLpi: number;
   halftoneAngle: number;
@@ -39,24 +53,35 @@ export interface AdvancedConfig {
 
 export const DEFAULT_CONFIG: AdvancedConfig = {
   sampleSize: 20000,
-  inkOpacity: 0.95, // Increased for richer preview
+  inkOpacity: 0.95, 
   kL: 1.0,
   kC: 1.0,
   kH: 1.0,
   separationMethod: 'ciede2000',
   separationType: 'vector',
-  speckleSize: 0,
-  erosionAmount: 0,
+  
+  outputDpi: 300,
+  outputSizeInches: 12,
+  outputMeasurement: 'width',
+
+  useVectorAntiAliasing: true,
+  useRasterAdaptive: true,
+
+  cleanupStrength: 3,
+  smoothEdges: 0,
+  minCoverage: 0.5,
+
   halftoneType: 'am',
-  halftoneLpi: 50, // Higher frequency for cleaner look
+  halftoneLpi: 45, 
   halftoneAngle: 22.5,
-  gamma: 1.25 // Slight gamma boost for "pop"
+  gamma: 1.25 
 };
 
 export enum ProcessingStatus {
   IDLE,
   LOADING_ENGINE,
   ANALYZING,
+  RESIZING,
   SEPARATING,
   CLEANING,
   HALFTONING,

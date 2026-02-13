@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Layer, AdvancedConfig } from '../types';
+import { Layer, AdvancedConfig, DEFAULT_CONFIG } from '../types';
 import Button from './Button';
 import LayerPreview from './LayerPreview';
 import { X, RefreshCw, Layers, Image as ImageIcon, Check, Trash2, MousePointer2, Scissors, PenTool, Eraser, ZoomIn, ZoomOut, MousePointerClick } from 'lucide-react';
@@ -40,11 +40,25 @@ export const ChopModal: React.FC<ChopModalProps> = ({ layer, onClose, onGenerate
     // --- AUTO MODE HANDLERS ---
     const handleGenerate = async () => {
         setLoading(true);
+        // Use DEFAULT_CONFIG as base to ensure all required properties
         const tempConfig: AdvancedConfig = {
-            sampleSize: 10000, inkOpacity: 1, kL: 1, kC: 1, kH: 1,
-            separationMethod: 'ciede2000', separationType: method,
-            speckleSize: 0, erosionAmount: 0,
-            halftoneType: 'am', halftoneLpi: 50, halftoneAngle: 22.5, gamma: 1.0
+            ...DEFAULT_CONFIG,
+            sampleSize: 10000, 
+            inkOpacity: 1, 
+            kL: 1, 
+            kC: 1, 
+            kH: 1,
+            separationMethod: 'ciede2000', 
+            separationType: method,
+            cleanupStrength: 3, 
+            smoothEdges: 0,
+            minCoverage: 0.5,
+            halftoneType: 'am', 
+            halftoneLpi: 50, 
+            halftoneAngle: 22.5, 
+            gamma: 1.0,
+            useVectorAntiAliasing: true,
+            useRasterAdaptive: true
         };
         try {
             const subs = await onGenerate(tempConfig, sublayerCount);

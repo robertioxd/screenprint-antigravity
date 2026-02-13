@@ -80,13 +80,14 @@ const LayerDetailModal: React.FC<LayerDetailModalProps> = ({
             </div>
 
             {/* Canvas Preview */}
-            <div className="relative max-h-[60vh] w-auto aspect-auto bg-white/5 rounded shadow-2xl border border-gray-700 overflow-hidden">
+            <div className="relative h-[60vh] w-full bg-white/5 rounded shadow-2xl border border-gray-700 overflow-hidden">
                 <LayerPreview 
                     imageData={layer.data} 
                     width={layer.data.width} 
                     height={layer.data.height}
                     tint={!isHalftone ? layer.color.hex : undefined}
-                    className="max-h-[60vh] w-auto"
+                    className="h-full w-full"
+                    fitContain={true}
                 />
             </div>
 

@@ -23,6 +23,16 @@ from skimage import color, morphology, filters
 import math
 import js
 
+def resize_image_py(image_data, w, h, target_w, target_h):
+    arr = np.array(image_data.to_py()).reshape(h, w, 4)
+    img = Image.fromarray(arr)
+    # Use Lanczos filter for high quality resampling
+    img_resized = img.resize((int(target_w), int(target_h)), Image.Resampling.LANCZOS)
+    
+    # Convert back to flat uint8 array
+    resized_arr = np.array(img_resized)
+    return resized_arr.flatten()
+
 def analyze_palette_py(image_data, width, height, k, sample_size):
     arr = np.array(image_data.to_py()).reshape(height, width, 4)
     pixels = arr.reshape(-1, 4)
@@ -97,7 +107,7 @@ def analyze_palette_py(image_data, width, height, k, sample_size):
     
     return hex_colors
 
-def separate_colors_py(image_data, width, height, palette_hex_list, kl, kc, kh, method, sep_type, speckle_size, erosion_amount, gamma_val):
+def separate_colors_py(image_data, width, height, palette_hex_list, kl, kc, kh, method, sep_type, cleanup_strength, smooth_edges, gamma_val, use_aa, use_adaptive, min_coverage):
     # Load and preprocess
     arr = np.array(image_data.to_py())
     pixels = arr.reshape(-1, 4)
@@ -116,6 +126,32 @@ def separate_colors_py(image_data, width, height, palette_hex_list, kl, kc, kh, 
         palette_lab = color.rgb2lab(palette_lab_source).reshape(-1, 3)
     else:
         palette_float = palette_arr_uint8.astype(np.float32)
+
+    # --- ADAPTIVE THRESHOLD CALCULATION (For Raster) ---
+    max_dist = 40.0
+    dist_slope = 10.0
+    
+    if sep_type == 'raster' and use_adaptive and len(palette_rgb) > 1:
+        # Calculate pairwise distances in palette
+        p_dists = []
+        n_p = len(palette_rgb)
+        if method == 'ciede2000':
+            for a in range(n_p):
+                for b in range(a+1, n_p):
+                    d = color.deltaE_ciede2000(palette_lab[a].reshape(1,1,3), palette_lab[b].reshape(1,1,3), kL=kl, kC=kc, kH=kh)
+                    p_dists.append(d)
+        else:
+             # Euclidean pairwise
+             p_float = palette_arr_uint8.astype(np.float32)
+             for a in range(n_p):
+                for b in range(a+1, n_p):
+                     d = np.sqrt(np.sum((p_float[a] - p_float[b])**2))
+                     p_dists.append(d)
+                     
+        if len(p_dists) > 0:
+            avg_dist = np.mean(p_dists)
+            max_dist = avg_dist * 0.6
+            dist_slope = avg_dist * 0.15 # Scale slope relative to distance
 
     num_pixels = rgb.shape[0]
     num_colors = len(palette_rgb)
@@ -149,13 +185,12 @@ def separate_colors_py(image_data, width, height, palette_hex_list, kl, kc, kh, 
                 layer_raw_values[i, start:end] = np.where(labels == i, 255.0, 0.0)
                 
         else: # 'raster' - SOFT MASKING
-            max_dist = 40.0 if method == 'ciede2000' else 100.0
             min_dists = np.min(chunk_dists, axis=1)
             
             for i in range(num_colors):
                 d = chunk_dists[:, i]
                 proximity = np.clip(1.0 - (d / max_dist), 0, 1)
-                prob_factor = np.clip(1.0 - (d - min_dists) / 10.0, 0, 1)
+                prob_factor = np.clip(1.0 - (d - min_dists) / dist_slope, 0, 1)
                 alpha_norm = proximity * prob_factor
                 
                 if gamma_val != 1.0:
@@ -170,16 +205,44 @@ def separate_colors_py(image_data, width, height, palette_hex_list, kl, kc, kh, 
     result_layers = []
     
     for i in range(num_colors):
-        alpha_channel = layer_raw_values[i].reshape(height, width).astype(np.uint8)
-        
-        if speckle_size > 0:
-            binary_mask = alpha_channel > 30
-            cleaned_mask = morphology.remove_small_objects(binary_mask, min_size=speckle_size)
-            alpha_channel = np.where(cleaned_mask, alpha_channel, 0)
+        # Flattened alpha array for this color
+        alpha_flat = layer_raw_values[i]
+        alpha_channel = alpha_flat.reshape(height, width).astype(np.uint8)
 
-        if erosion_amount > 0:
-            selem = morphology.disk(erosion_amount)
-            alpha_channel = morphology.erosion(alpha_channel, selem)
+        # 1. MIN COVERAGE (Drops "ghost" layers)
+        # Calculate percentage of significant pixels (> 20 intensity)
+        if min_coverage > 0:
+            coverage_pct = np.sum(alpha_channel > 20) / (width * height) * 100.0
+            if coverage_pct < min_coverage:
+                alpha_channel[:] = 0
+
+        # Check if layer is empty before proceeding
+        if np.any(alpha_channel):
+
+            # 2. CLEANUP STRENGTH (Intelligent Speckle Removal)
+            if cleanup_strength > 0:
+                # Calculate total area of ink
+                total_area = np.sum(alpha_channel > 0)
+                # Threshold for removing objects based on relative area (0.1% to 5% per 1000 range approx)
+                min_area = int(total_area * cleanup_strength / 1000.0)
+                
+                if min_area > 4:
+                    binary_mask = alpha_channel > 50
+                    cleaned_mask = morphology.remove_small_objects(binary_mask, min_size=min_area)
+                    # Restore gradients only where mask is valid
+                    alpha_channel = np.where(cleaned_mask, alpha_channel, 0)
+
+            # 3. SMOOTH EDGES (Gaussian Blur + Re-threshold)
+            if smooth_edges > 0:
+                sigma = smooth_edges * 0.3 # Range 0-5 -> 0.0 - 1.5 sigma
+                alpha_float = alpha_channel.astype(np.float32) / 255.0
+                alpha_smooth = filters.gaussian(alpha_float, sigma=sigma)
+                # Re-normalize/Clip
+                alpha_channel = (alpha_smooth * 255).clip(0, 255).astype(np.uint8)
+
+            # --- VECTOR ANTI-ALIASING (Specific to Vector mode, applied separately/additionally) ---
+            if sep_type == 'vector' and use_aa:
+                 pass 
 
         # Output RGBA (Ink on transparent)
         layer_out = np.zeros((height, width, 4), dtype=np.uint8)
@@ -188,14 +251,16 @@ def separate_colors_py(image_data, width, height, palette_hex_list, kl, kc, kh, 
         
     return result_layers
 
-def apply_halftone_am_py(layer_data, width, height, lpi, angle_deg):
+def apply_halftone_am_py(layer_data, width, height, lpi, angle_deg, dpi):
     arr = np.array(layer_data.to_py()).reshape(height, width, 4)
     alpha = arr[:, :, 3].astype(np.float32) / 255.0
     
     ink_density = alpha
     
-    # Calculate screen pattern
-    wavelength = 300.0 / lpi 
+    # Calculate screen pattern based on DPI and LPI
+    # Wavelength is the number of pixels per halftone cell
+    wavelength = float(dpi) / float(lpi)
+    
     theta = math.radians(angle_deg)
     cos_t = math.cos(theta)
     sin_t = math.sin(theta)
@@ -212,16 +277,14 @@ def apply_halftone_am_py(layer_data, width, height, lpi, angle_deg):
     halftoned = ink_density > (1.0 - screen_threshold)
     
     # --- REFINED CLEANUP ---
-    # 1. Aggressive Solid Snapping: Force >85% opacity to solid to eliminate pinholes
+    # 1. Aggressive Solid Snapping: Force >85% opacity to solid
     halftoned = np.logical_or(halftoned, ink_density > 0.85)
     
-    # 2. Aggressive Clear Snapping: Force <5% opacity to clear to eliminate scum dots
+    # 2. Aggressive Clear Snapping: Force <5% opacity to clear
     halftoned = np.logical_and(halftoned, ink_density > 0.05)
     
-    # 3. Morphological Despeckling: Remove 1-2 pixel noise
-    # Remove isolated black pixels (pepper noise)
+    # 3. Morphological Despeckling
     halftoned = morphology.remove_small_objects(halftoned, min_size=3)
-    # Remove isolated white holes inside solids (salt noise)
     halftoned = morphology.remove_small_holes(halftoned, area_threshold=3)
     
     out = np.zeros((height, width, 4), dtype=np.uint8)
@@ -293,6 +356,20 @@ export const getPyodideInfo = () => {
     }
 }
 
+export const resizeImage = async (imageData: ImageData, targetWidth: number, targetHeight: number): Promise<ImageData> => {
+    if (!pyodide) await initEngine();
+    const resultProxy = await pyodide.globals.get('resize_image_py')(
+        imageData.data, 
+        imageData.width, 
+        imageData.height,
+        targetWidth,
+        targetHeight
+    );
+    const u8 = new Uint8ClampedArray(resultProxy.toJs());
+    resultProxy.destroy();
+    return new ImageData(u8, targetWidth, targetHeight);
+}
+
 export const analyzePalette = async (imageData: ImageData, k: number = 6, config: AdvancedConfig): Promise<PaletteColor[]> => {
   if (!pyodide) await initEngine();
   const resultProxy = await pyodide.globals.get('analyze_palette_py')(imageData.data, imageData.width, imageData.height, k, config.sampleSize);
@@ -319,9 +396,12 @@ export const performSeparation = async (imageData: ImageData, palette: PaletteCo
     config.kH,
     config.separationMethod,
     config.separationType,
-    config.speckleSize,
-    config.erosionAmount,
-    config.gamma
+    config.cleanupStrength,
+    config.smoothEdges,
+    config.gamma,
+    config.useVectorAntiAliasing,
+    config.useRasterAdaptive,
+    config.minCoverage
   );
   const layersDataList = layersProxy.toJs();
   layersProxy.destroy();
@@ -346,7 +426,8 @@ export const applyHalftone = async (layerData: ImageData, config?: AdvancedConfi
           layerData.width, 
           layerData.height,
           config.halftoneLpi,
-          config.halftoneAngle
+          config.halftoneAngle,
+          config.outputDpi || 300 // Pass DPI to python
       );
   } else {
       resultProxy = await pyodide.globals.get('apply_halftone_fm_py')(

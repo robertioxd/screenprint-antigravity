@@ -1,15 +1,17 @@
 import React, { useState, useEffect } from 'react';
-import { Layers, Printer, Wand2, Settings, Download, ScanEye, Package, ChevronDown, FileImage, FileArchive, Pipette, Maximize2, X } from 'lucide-react';
+import { Layers, Printer, Wand2, Settings, Download, ScanEye, Package, ChevronDown, FileImage, FileArchive, Pipette, Maximize2, X, BookOpen } from 'lucide-react';
 import UploadZone from './components/UploadZone';
 import PaletteManager from './components/PaletteManager';
 import LayerPreview from './components/LayerPreview';
 import ComparisonView from './components/ComparisonView';
 import AdvancedSettings from './components/AdvancedSettings';
+import OutputSizePanel from './components/OutputSizePanel';
+import GuideSection from './components/GuideSection';
 import Button from './components/Button';
 import LayerDetailModal from './components/LayerDetailModal';
 import { ChopModal, MergeModal, EditColorModal } from './components/LayerActionModals';
 import { Layer, PaletteColor, ProcessingStatus, AdvancedConfig, DEFAULT_CONFIG } from './types';
-import { analyzePalette, performSeparation, applyHalftone, initEngine, generateComposite, getPyodideInfo, hexToRgb, mergeLayersData, createGrayscaleFromAlpha } from './services/imageProcessing';
+import { analyzePalette, performSeparation, applyHalftone, initEngine, generateComposite, getPyodideInfo, hexToRgb, mergeLayersData, createGrayscaleFromAlpha, resizeImage } from './services/imageProcessing';
 import { downloadComposite, downloadChannelsZip } from './services/exportService';
 
 const App: React.FC = () => {
@@ -19,7 +21,7 @@ const App: React.FC = () => {
   const [palette, setPalette] = useState<PaletteColor[]>([]);
   const [layers, setLayers] = useState<Layer[]>([]);
   const [status, setStatus] = useState<ProcessingStatus>(ProcessingStatus.IDLE);
-  const [activeTab, setActiveTab] = useState<'original' | 'separation' | 'halftone' | 'compare'>('original');
+  const [activeTab, setActiveTab] = useState<'original' | 'separation' | 'halftone' | 'compare' | 'guide'>('original');
   const [engineReady, setEngineReady] = useState(false);
   const [pyodideInfo, setPyodideInfo] = useState<{version: string, packages: string[]} | null>(null);
   const [advancedConfig, setAdvancedConfig] = useState<AdvancedConfig>(DEFAULT_CONFIG);
@@ -57,12 +59,12 @@ const App: React.FC = () => {
     setIsPickerActive(false);
   };
 
-  const runAnalysis = async () => {
+  const runAnalysis = async (numColors: number) => {
     if (!originalImage) return;
     setStatus(ProcessingStatus.ANALYZING);
     try {
       await new Promise(r => setTimeout(r, 50));
-      const detected = await analyzePalette(originalImage, 8, advancedConfig);
+      const detected = await analyzePalette(originalImage, numColors, advancedConfig);
       setPalette(detected);
     } catch (e) {
       console.error(e);
@@ -74,15 +76,46 @@ const App: React.FC = () => {
 
   const runSeparation = async () => {
     if (!originalImage || palette.length === 0) return;
-    setStatus(ProcessingStatus.SEPARATING);
+    
     try {
+        let workingImage = originalImage;
+
+        // 1. Check for Resize Requirement
+        const aspectRatio = originalImage.width / originalImage.height;
+        let targetW, targetH;
+        
+        if (advancedConfig.outputMeasurement === 'width') {
+            targetW = Math.round(advancedConfig.outputSizeInches * advancedConfig.outputDpi);
+            targetH = Math.round(targetW / aspectRatio);
+        } else {
+            targetH = Math.round(advancedConfig.outputSizeInches * advancedConfig.outputDpi);
+            targetW = Math.round(targetH * aspectRatio);
+        }
+
+        // Allow some tolerance to avoid unnecessary resizing (e.g. rounding errors)
+        if (Math.abs(targetW - originalImage.width) > 2 || Math.abs(targetH - originalImage.height) > 2) {
+            setStatus(ProcessingStatus.RESIZING);
+            await new Promise(r => setTimeout(r, 20)); // UI refresh
+            
+            // Resize image using Python/Lanczos
+            workingImage = await resizeImage(originalImage, targetW, targetH);
+            
+            // Update original image state to reflect the new working resolution
+            setOriginalImage(workingImage);
+        }
+
+        setStatus(ProcessingStatus.SEPARATING);
         await new Promise(r => setTimeout(r, 50));
-        const result = await performSeparation(originalImage, palette, advancedConfig);
+        
+        const result = await performSeparation(workingImage, palette, advancedConfig);
         setLayers(result);
+        
         setStatus(ProcessingStatus.COMPOSITING);
-        const comp = await generateComposite(result, originalImage.width, originalImage.height, advancedConfig);
+        const comp = await generateComposite(result, workingImage.width, workingImage.height, advancedConfig);
         setCompositeImage(comp);
+        
         setActiveTab('separation');
+
     } catch (e) {
         console.error(e);
         alert("Separation failed");
@@ -103,7 +136,11 @@ const App: React.FC = () => {
         }
         setLayers(halftonedLayers);
         setStatus(ProcessingStatus.COMPOSITING);
-        const comp = await generateComposite(halftonedLayers, originalImage!.width, originalImage!.height, advancedConfig);
+        // Ensure we use the current image dimensions (which might be resized)
+        const currentWidth = layers[0].data.width;
+        const currentHeight = layers[0].data.height;
+        
+        const comp = await generateComposite(halftonedLayers, currentWidth, currentHeight, advancedConfig);
         setCompositeImage(comp);
         setActiveTab('halftone');
         setStatus(ProcessingStatus.COMPLETE);
@@ -127,13 +164,11 @@ const App: React.FC = () => {
 
   // Update composite whenever layers or configs change
   useEffect(() => {
-    if (originalImage && (activeTab === 'separation' || activeTab === 'halftone' || activeTab === 'compare')) {
+    if (layers.length > 0 && (activeTab === 'separation' || activeTab === 'halftone' || activeTab === 'compare')) {
         const updateComposite = async () => {
-            if (layers.length === 0) {
-                setCompositeImage(null);
-                return;
-            }
-            const comp = await generateComposite(layers, originalImage.width, originalImage.height, advancedConfig);
+            const width = layers[0].data.width;
+            const height = layers[0].data.height;
+            const comp = await generateComposite(layers, width, height, advancedConfig);
             setCompositeImage(comp);
         };
         updateComposite();
@@ -144,17 +179,10 @@ const App: React.FC = () => {
   
   const handleLayerAction = (action: 'chop' | 'merge' | 'edit' | 'delete', layer: Layer) => {
       if (action === 'delete') {
-          // Use window.confirm for a synchronous block
           if (window.confirm(`¿Estás seguro de que deseas eliminar permanentemente el canal ${layer.color.hex}?`)) {
-              // 1. Unmount the modal immediately to prevent it from accessing the deleted layer index
               setPreviewLayerIndex(null);
-              
-              // 2. Defer the state update to the next tick. 
-              // This ensures the render cycle completes the unmount BEFORE the layer array is modified.
-              setTimeout(() => {
-                  setLayers(prev => prev.filter(l => l.id !== layer.id));
-                  setPalette(prev => prev.filter(p => p.id !== layer.color.id));
-              }, 0);
+              setLayers(prev => prev.filter(l => l.id !== layer.id));
+              setPalette(prev => prev.filter(p => p.id !== layer.color.id));
           }
       } else {
           setModalMode(action);
@@ -295,6 +323,17 @@ const App: React.FC = () => {
 
       <main className="flex-1 flex overflow-hidden">
         <aside className="w-80 bg-gray-900 border-r border-gray-700 flex flex-col p-4 gap-4 overflow-y-auto custom-scrollbar flex-shrink-0">
+          
+          {/* Output Size Panel */}
+          {originalImage && (
+              <OutputSizePanel 
+                config={advancedConfig} 
+                onChange={setAdvancedConfig} 
+                originalWidth={originalImage.width}
+                originalHeight={originalImage.height}
+              />
+          )}
+
           <div className="space-y-3">
             <div className="flex items-center gap-2 text-xs font-bold text-gray-500 uppercase tracking-widest px-1">
               <Wand2 className="w-4 h-4" /> 1. Paleta de Tintas
@@ -313,8 +352,8 @@ const App: React.FC = () => {
               onToggle={() => setShowAdvancedSettings(!showAdvancedSettings)} 
             />
             <div className="space-y-2">
-              <Button className="w-full text-sm py-2.5 shadow-lg shadow-blue-900/20" onClick={runSeparation} disabled={palette.length === 0 || !originalImage || !engineReady} isLoading={status === ProcessingStatus.SEPARATING || status === ProcessingStatus.COMPOSITING}>
-                Run Separation
+              <Button className="w-full text-sm py-2.5 shadow-lg shadow-blue-900/20" onClick={runSeparation} disabled={palette.length === 0 || !originalImage || !engineReady} isLoading={status === ProcessingStatus.SEPARATING || status === ProcessingStatus.COMPOSITING || status === ProcessingStatus.RESIZING}>
+                {status === ProcessingStatus.RESIZING ? 'Rescaling Image...' : 'Run Separation'}
               </Button>
               <Button className="w-full text-sm py-2.5" variant="secondary" onClick={runHalftone} disabled={layers.length === 0 || !engineReady} isLoading={status === ProcessingStatus.HALFTONING}>
                 Apply Bitmaps
@@ -353,25 +392,32 @@ const App: React.FC = () => {
             <button onClick={() => setActiveTab('separation')} disabled={layers.length === 0} className={`px-4 py-2 text-xs font-bold uppercase tracking-widest rounded-t-md transition-all ${activeTab === 'separation' ? 'bg-gray-850 text-blue-400 border-b-2 border-blue-500' : 'text-gray-500 hover:text-gray-300 disabled:opacity-30'}`}>Separations</button>
             <button onClick={() => setActiveTab('compare')} disabled={!compositeImage} className={`px-4 py-2 text-xs font-bold uppercase tracking-widest rounded-t-md transition-all flex items-center gap-2 ${activeTab === 'compare' ? 'bg-gray-850 text-blue-400 border-b-2 border-blue-500' : 'text-gray-500 hover:text-gray-300 disabled:opacity-30'}`}><ScanEye className="w-3 h-3" /> Compare</button>
             <button onClick={() => setActiveTab('halftone')} disabled={layers.length === 0 || status !== ProcessingStatus.COMPLETE} className={`px-4 py-2 text-xs font-bold uppercase tracking-widest rounded-t-md transition-all ${activeTab === 'halftone' ? 'bg-gray-850 text-blue-400 border-b-2 border-blue-500' : 'text-gray-500 hover:text-gray-300 disabled:opacity-30'}`}>Halftones</button>
+            <button onClick={() => setActiveTab('guide')} className={`ml-auto px-4 py-2 text-xs font-bold uppercase tracking-widest rounded-t-md transition-all flex items-center gap-2 ${activeTab === 'guide' ? 'bg-gray-850 text-blue-400 border-b-2 border-blue-500' : 'text-gray-500 hover:text-gray-300'}`}><BookOpen className="w-3 h-3" /> Guía / Ayuda</button>
           </div>
 
           <div className="flex-1 p-8 overflow-auto flex items-start justify-center custom-scrollbar bg-[radial-gradient(circle_at_center,_var(--tw-gradient-stops))] from-gray-900 to-gray-950">
+            {activeTab === 'guide' && <GuideSection />}
             {activeTab === 'original' && (
               <div className="w-full max-w-4xl animate-in fade-in duration-500">
                 {!originalImage ? <UploadZone onImageLoad={handleImageLoad} /> : (
                   <div className="space-y-4">
                      <div className="flex justify-between items-center bg-gray-900 p-2 rounded-t-lg border border-gray-700 border-b-0">
                         <span className="text-xs font-bold text-gray-400 px-2">ARTWORK WORKSPACE</span>
-                        <Button 
-                            variant={isPickerActive ? "primary" : "secondary"} 
-                            size="sm"
-                            className="text-xs py-1"
-                            onClick={() => setIsPickerActive(!isPickerActive)}
-                            title="Click on the image to add a color to the palette"
-                        >
-                            <Pipette className="w-3 h-3 mr-1" />
-                            {isPickerActive ? "Picker Active" : "Color Picker"}
-                        </Button>
+                        <div className="flex gap-2">
+                            <span className="bg-gray-800 text-gray-500 text-[10px] px-2 py-1 rounded border border-gray-700 font-mono">
+                                {originalImage.width}x{originalImage.height}px
+                            </span>
+                            <Button 
+                                variant={isPickerActive ? "primary" : "secondary"} 
+                                size="sm"
+                                className="text-xs py-1"
+                                onClick={() => setIsPickerActive(!isPickerActive)}
+                                title="Click on the image to add a color to the palette"
+                            >
+                                <Pipette className="w-3 h-3 mr-1" />
+                                {isPickerActive ? "Picker Active" : "Color Picker"}
+                            </Button>
+                        </div>
                      </div>
                      <div className="border border-gray-700 rounded-b-lg overflow-hidden shadow-2xl">
                         <LayerPreview 

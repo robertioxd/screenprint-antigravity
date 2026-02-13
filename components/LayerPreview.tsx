@@ -8,6 +8,7 @@ interface LayerPreviewProps {
   tint?: string; 
   onPixelSelect?: (hex: string) => void;
   className?: string;
+  fitContain?: boolean;
 }
 
 interface LoupeState {
@@ -19,7 +20,7 @@ interface LoupeState {
   hex: string;
 }
 
-const LayerPreview: React.FC<LayerPreviewProps> = ({ imageData, width, height, label, tint, onPixelSelect, className }) => {
+const LayerPreview: React.FC<LayerPreviewProps> = ({ imageData, width, height, label, tint, onPixelSelect, className, fitContain }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const loupeCanvasRef = useRef<HTMLCanvasElement>(null);
   const [loupe, setLoupe] = useState<LoupeState>({ visible: false, x: 0, y: 0, pixelX: 0, pixelY: 0, hex: '' });
@@ -166,9 +167,17 @@ const LayerPreview: React.FC<LayerPreviewProps> = ({ imageData, width, height, l
     ? "bg-gray-800" 
     : "bg-[url('https://www.transparenttextures.com/patterns/checkerboard.png')] bg-white";
 
+  const containerClasses = fitContain 
+    ? `relative group border border-gray-600 rounded overflow-hidden shadow-sm ${bgStyle} flex items-center justify-center ${className || ''}`
+    : `relative group border border-gray-600 rounded overflow-hidden shadow-sm ${bgStyle} ${className || ''}`;
+
+  const canvasClasses = fitContain
+    ? `max-w-full max-h-full w-auto h-auto block ${onPixelSelect ? 'cursor-none' : 'cursor-default'}`
+    : `w-full h-auto block ${onPixelSelect ? 'cursor-none' : 'cursor-default'}`;
+
   return (
     <>
-        <div className={`relative group border border-gray-600 rounded overflow-hidden shadow-sm ${bgStyle} ${className || ''}`}>
+        <div className={containerClasses}>
           {label && (
             <div className="absolute top-0 left-0 bg-black/70 text-white text-[10px] px-2 py-0.5 z-10 font-bold">
               {label}
@@ -181,7 +190,7 @@ const LayerPreview: React.FC<LayerPreviewProps> = ({ imageData, width, height, l
             onMouseMove={handleMouseMove}
             onMouseLeave={handleMouseLeave}
             onClick={handleCanvasClick}
-            className={`w-full h-auto block ${onPixelSelect ? 'cursor-none' : 'cursor-default'}`} // Hide default cursor when picking
+            className={canvasClasses} 
           />
         </div>
 

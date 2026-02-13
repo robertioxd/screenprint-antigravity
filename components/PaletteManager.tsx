@@ -2,17 +2,18 @@ import React, { useState } from 'react';
 import { PaletteColor, ProcessingStatus } from '../types';
 import Button from './Button';
 import { hexToRgb } from '../services/imageProcessing';
-import { Plus, Trash2, RefreshCw } from 'lucide-react';
+import { Plus, Trash2, RefreshCw, Palette } from 'lucide-react';
 
 interface PaletteManagerProps {
   palette: PaletteColor[];
   setPalette: (colors: PaletteColor[]) => void;
-  onAnalyze: () => void;
+  onAnalyze: (numColors: number) => void;
   status: ProcessingStatus;
 }
 
 const PaletteManager: React.FC<PaletteManagerProps> = ({ palette, setPalette, onAnalyze, status }) => {
   const [newColorHex, setNewColorHex] = useState('#000000');
+  const [maxColors, setMaxColors] = useState<number>(6);
 
   const handleRemove = (id: string) => {
     setPalette(palette.filter(c => c.id !== id));
@@ -42,18 +43,36 @@ const PaletteManager: React.FC<PaletteManagerProps> = ({ palette, setPalette, on
   return (
     <div className="bg-gray-800 p-4 rounded-lg border border-gray-700 flex flex-col shadow-inner">
       <div className="flex justify-between items-center mb-4">
-        <h2 className="text-sm font-bold text-gray-400 uppercase tracking-widest">Tinta / Palette</h2>
-        <Button 
-          variant="secondary" 
-          size="sm" 
-          onClick={onAnalyze}
-          isLoading={status === ProcessingStatus.ANALYZING}
-          title="Extract dominant colors using K-Means"
-          className="text-[10px] py-1"
-        >
-          <RefreshCw className="w-3 h-3 mr-1" />
-          Auto
-        </Button>
+        <h2 className="text-sm font-bold text-gray-400 uppercase tracking-widest flex items-center gap-2">
+            <Palette className="w-4 h-4"/> Tinta / Palette
+        </h2>
+        
+        <div className="flex items-center gap-2">
+             <div className="flex items-center bg-gray-900 rounded border border-gray-600 px-2 py-0.5 h-7">
+                <span className="text-[9px] text-gray-500 font-bold uppercase mr-2">Max</span>
+                <select 
+                    value={maxColors} 
+                    onChange={(e) => setMaxColors(parseInt(e.target.value))}
+                    className="bg-transparent text-xs font-mono text-blue-400 focus:outline-none cursor-pointer appearance-none text-right font-bold"
+                    title="Maximum colors to detect"
+                >
+                    {[2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map(num => (
+                        <option key={num} value={num} className="bg-gray-800 text-white">{num}</option>
+                    ))}
+                </select>
+             </div>
+            <Button 
+              variant="secondary" 
+              size="sm" 
+              onClick={() => onAnalyze(maxColors)}
+              isLoading={status === ProcessingStatus.ANALYZING}
+              title="Extract dominant colors using K-Means"
+              className="text-[10px] py-1 h-7"
+            >
+              <RefreshCw className="w-3 h-3 mr-1" />
+              Auto
+            </Button>
+        </div>
       </div>
 
       <div className="max-h-60 overflow-y-auto space-y-2 pr-2 mb-4 custom-scrollbar">
