@@ -1,5 +1,5 @@
 import React from 'react';
-import { Layers, Image as ImageIcon, Sparkles, Feather, Grid3X3, Ruler, Info, BookOpen, Wand2 } from 'lucide-react';
+import { Layers, Image as ImageIcon, Sparkles, Feather, Grid3X3, Ruler, Info, BookOpen, Wand2, Calculator } from 'lucide-react';
 
 const GuideSection: React.FC = () => {
   return (
@@ -50,6 +50,20 @@ const GuideSection: React.FC = () => {
                   <br/><span className="text-xs text-gray-500 italic">Recomendado para: Fotos, arte digital complejo, humo, fuego.</span>
                 </p>
               </div>
+            </div>
+            
+            <div className="mt-4 p-3 bg-gray-800 rounded border border-gray-700">
+               <div className="flex items-center gap-2 mb-1">
+                   <Calculator className="w-4 h-4 text-green-500" />
+                   <h4 className="font-bold text-green-400 text-xs uppercase">Adaptive Threshold (Umbral Adaptativo)</h4>
+               </div>
+               <p className="text-gray-400 text-xs leading-relaxed">
+                   Calcula automáticamente el rango de captura de color basándose en la distancia entre los colores de tu paleta.
+                   <br/><br/>
+                   <strong className="text-gray-300">¿Cuándo usarlo?</strong> En imágenes con degradados sutiles (ej. tonos de piel) donde los colores de la paleta son muy similares. Ayuda a fusionarlos suavemente.
+                   <br/><br/>
+                   <strong className="text-gray-300">¿Cuándo apagarlo?</strong> En imágenes de alto contraste (ej. Negro sobre Blanco) o diseños con fondos sólidos. Si notas "ruido" o suciedad en el fondo, apágalo para usar el umbral estándar fijo.
+               </p>
             </div>
           </div>
         </div>

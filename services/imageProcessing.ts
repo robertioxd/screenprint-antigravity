@@ -111,23 +111,43 @@ def separate_colors_py(image_data, width, height, palette_hex_list, kl, kc, kh, 
         palette_float = palette_arr_uint8.astype(np.float32)
 
     # --- RASTER SOFT PARAMETERS ---
-    # Increased thresholds for wider blending ranges
-    max_dist = 65.0 
-    dist_slope = 25.0
+    # Default Base Values
+    max_dist = 60.0 
+    dist_slope = 30.0
     
+    # Adaptive Logic: Calculates threshold based on NEAREST neighbor distance, not global average.
     if sep_type == 'raster' and use_adaptive and len(palette_rgb) > 1:
-        p_dists = []
-        n_p = len(palette_rgb)
         p_float_est = palette_arr_uint8.astype(np.float32)
-        for a in range(n_p):
-            for b in range(a+1, n_p):
-                 d = np.sqrt(np.sum((p_float_est[a] - p_float_est[b])**2))
-                 p_dists.append(d * 0.45) # Heuristic for LAB distance
-                     
-        if len(p_dists) > 0:
-            avg_dist = np.mean(p_dists)
-            max_dist = avg_dist * 1.2 # Wider coverage
-            dist_slope = avg_dist * 0.6 # Softer transition slope
+        min_neighbor_dists = []
+        n_p = len(palette_rgb)
+
+        for i in range(n_p):
+            dists = []
+            for j in range(n_p):
+                if i == j: continue
+                # Euclidean approximate for fast neighbor finding
+                d = np.sqrt(np.sum((p_float_est[i] - p_float_est[j])**2))
+                dists.append(d)
+            if dists:
+                min_neighbor_dists.append(min(dists))
+        
+        if len(min_neighbor_dists) > 0:
+            # Average distance to closest neighbor for the whole palette
+            avg_nearest_dist = np.mean(min_neighbor_dists)
+            
+            # The capture radius should be roughly half the distance to the next color
+            # Multiplier 0.5 would be strict, 0.7 allows blending.
+            calculated_dist = avg_nearest_dist * 0.7 
+            
+            # CRITICAL FIX: Clamp the max_dist. 
+            # If we have Black vs White, distance is huge (~440). We must NOT let max_dist get that big.
+            # 70.0 is a reasonable upper limit for CIEDE2000/LAB workflows to prevent background noise.
+            max_dist = min(calculated_dist, 70.0) 
+            
+            # Ensure it doesn't go too low for subtle gradients
+            max_dist = max(max_dist, 25.0)
+
+            dist_slope = max_dist * 0.5
 
     num_pixels = rgb.shape[0]
     num_colors = len(palette_rgb)
@@ -158,32 +178,30 @@ def separate_colors_py(image_data, width, height, palette_hex_list, kl, kc, kh, 
                 mask = (labels == i)
                 layer_raw_values[i, start:end][mask] = 255.0
         else:
-            # --- SOFT RASTER LOGIC (FIXED) ---
+            # --- SOFT RASTER LOGIC ---
             min_dists = np.min(chunk_dists, axis=1, keepdims=True)
             
             for i in range(num_colors):
                 raw_d = chunk_dists[:, i]
                 min_d = min_dists[:, 0]
                 
-                # 1. Proximity Factor: How close is the pixel to the color in absolute terms?
+                # 1. Proximity Factor
                 proximity = 1.0 - (raw_d / max_dist)
                 np.clip(proximity, 0, 1, out=proximity)
                 
-                # 2. Exclusivity Factor: Is this the BEST color or close to it?
-                # Using a soft-maximum approach. dist_slope controls the "leak" between colors.
+                # 2. Exclusivity Factor
                 dist_diff = raw_d - min_d
                 exclusivity = 1.0 - (dist_diff / dist_slope)
                 np.clip(exclusivity, 0, 1, out=exclusivity)
                 
-                # Combine both factors for the final mask intensity
+                # Combine
                 alpha = proximity * exclusivity
                 
-                # Apply Gamma for soft contrast control
+                # Gamma
                 if gamma_val != 1.0:
                     np.power(alpha, gamma_val, out=alpha)
                 
-                # ONLY snap the extreme noise floor to keep it clean
-                # Removed the high-end snap (alpha > 0.85) to prevent solid-looking results
+                # Low-end noise gate
                 alpha[alpha < 0.02] = 0.0
                 
                 layer_raw_values[i, start:end] = alpha * 255.0
