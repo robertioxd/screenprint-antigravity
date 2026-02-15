@@ -36,7 +36,7 @@ const LayerDetailModal: React.FC<LayerDetailModalProps> = ({
   }, [onNavigate, onClose]);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 backdrop-blur-md p-4 md:p-8 animate-in fade-in duration-200" onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/95 backdrop-blur-md p-4 md:p-8 animate-in fade-in duration-200" onClick={onClose}>
         
         {/* Close Button */}
         <div className="absolute top-4 right-4 z-50">
@@ -80,14 +80,16 @@ const LayerDetailModal: React.FC<LayerDetailModalProps> = ({
             </div>
 
             {/* Canvas Preview */}
-            <div className="relative h-[60vh] w-full bg-white/5 rounded shadow-2xl border border-gray-700 overflow-hidden">
+            {/* Removed bg-white/5 to allow full transparency showing the black modal background */}
+            <div className="relative h-[60vh] w-full bg-transparent rounded shadow-2xl border border-gray-800 overflow-hidden flex items-center justify-center">
                 <LayerPreview 
                     imageData={layer.data} 
                     width={layer.data.width} 
                     height={layer.data.height}
                     tint={!isHalftone ? layer.color.hex : undefined}
-                    className="h-full w-full"
+                    className="h-full w-full object-contain"
                     fitContain={true}
+                    forceBackground="none" // Forces transparent background so only the colored pixels show
                 />
             </div>
 

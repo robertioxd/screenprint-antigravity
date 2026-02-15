@@ -36,6 +36,28 @@ export const ChopModal: React.FC<ChopModalProps> = ({ layer, onClose, onGenerate
     const [zoom, setZoom] = useState(1.0);
     
     const canvasRef = useRef<HTMLCanvasElement>(null);
+    const containerRef = useRef<HTMLDivElement>(null);
+
+    // --- AUTO ZOOM CALCULATION ---
+    useEffect(() => {
+        if (mode === 'manual' && containerRef.current && manualLayers.length > 0) {
+            const container = containerRef.current;
+            const imgW = manualLayers[0].data.width;
+            const imgH = manualLayers[0].data.height;
+            const contW = container.clientWidth - 100; // Padding buffer
+            const contH = container.clientHeight - 100; 
+
+            if (imgW > 0 && imgH > 0) {
+                const scaleX = contW / imgW;
+                const scaleY = contH / imgH;
+                const fitScale = Math.min(scaleX, scaleY);
+                // Set zoom to fit, capped at 1.0 (don't scale up small images initially)
+                // but allow scaling down for large images
+                const finalZoom = fitScale < 1.0 ? fitScale : 1.0;
+                setZoom(parseFloat(finalZoom.toFixed(2)));
+            }
+        }
+    }, [mode]);
 
     // --- AUTO MODE HANDLERS ---
     const handleGenerate = async () => {
@@ -289,9 +311,9 @@ export const ChopModal: React.FC<ChopModalProps> = ({ layer, onClose, onGenerate
                                 <ZoomOut className="w-3 h-3 text-gray-400"/>
                                 <input 
                                     type="range" 
-                                    min="1.0" 
+                                    min="0.1" 
                                     max="5.0" 
-                                    step="0.1" 
+                                    step="0.05" 
                                     value={zoom} 
                                     onChange={(e) => setZoom(parseFloat(e.target.value))} 
                                     className="w-24 h-1.5 bg-gray-600 rounded-lg appearance-none cursor-pointer accent-blue-500"
@@ -333,13 +355,16 @@ export const ChopModal: React.FC<ChopModalProps> = ({ layer, onClose, onGenerate
                     </div>
 
                     <div className="flex-1 flex overflow-hidden">
-                        <div className="flex-1 relative bg-[url('https://www.transparenttextures.com/patterns/checkerboard.png')] bg-gray-800 overflow-auto flex items-start justify-center p-12 custom-scrollbar">
+                        <div 
+                            ref={containerRef}
+                            className="flex-1 relative bg-[url('https://www.transparenttextures.com/patterns/checkerboard.png')] bg-gray-800 overflow-auto flex items-center justify-center p-12 custom-scrollbar"
+                        >
                             <div 
                                 style={{ 
                                     transform: `scale(${zoom})`, 
-                                    transformOrigin: 'top center',
+                                    transformOrigin: 'center center',
                                 }} 
-                                className="transition-transform duration-100 ease-out"
+                                className="transition-transform duration-100 ease-out shadow-2xl border border-gray-600"
                             >
                                 <canvas 
                                     ref={canvasRef} 
@@ -347,7 +372,7 @@ export const ChopModal: React.FC<ChopModalProps> = ({ layer, onClose, onGenerate
                                     onMouseMove={handleMouseMove} 
                                     onMouseUp={handleMouseUp} 
                                     onDoubleClick={handleDoubleClick} 
-                                    className="shadow-2xl cursor-crosshair border border-gray-600 max-w-none bg-black/20" 
+                                    className="cursor-crosshair block bg-black/20" 
                                     style={{ 
                                         imageRendering: zoom > 1.2 ? 'pixelated' : 'auto' 
                                     }}

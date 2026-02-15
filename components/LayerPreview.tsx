@@ -9,6 +9,7 @@ interface LayerPreviewProps {
   onPixelSelect?: (hex: string) => void;
   className?: string;
   fitContain?: boolean;
+  forceBackground?: 'white' | 'transparent' | 'dark' | 'none'; // Added 'none'
 }
 
 interface LoupeState {
@@ -20,7 +21,7 @@ interface LoupeState {
   hex: string;
 }
 
-const LayerPreview: React.FC<LayerPreviewProps> = memo(({ imageData, width, height, label, tint, onPixelSelect, className, fitContain }) => {
+const LayerPreview: React.FC<LayerPreviewProps> = memo(({ imageData, width, height, label, tint, onPixelSelect, className, fitContain, forceBackground }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const loupeCanvasRef = useRef<HTMLCanvasElement>(null);
   const [loupe, setLoupe] = useState<LoupeState>({ visible: false, x: 0, y: 0, pixelX: 0, pixelY: 0, hex: '' });
@@ -32,6 +33,9 @@ const LayerPreview: React.FC<LayerPreviewProps> = memo(({ imageData, width, heig
 
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
+
+    // Clear canvas first if transparency is needed
+    ctx.clearRect(0, 0, width, height);
 
     if (!tint) {
         ctx.putImageData(imageData, 0, 0);
@@ -156,22 +160,32 @@ const LayerPreview: React.FC<LayerPreviewProps> = memo(({ imageData, width, heig
   };
 
   // Determine background style
-  let useDarkBg = false;
-  if (tint) {
-    const r = parseInt(tint.slice(1, 3), 16);
-    const g = parseInt(tint.slice(3, 5), 16);
-    const b = parseInt(tint.slice(5, 7), 16);
-    const luminance = 0.299 * r + 0.587 * g + 0.114 * b;
-    if (luminance > 180) useDarkBg = true;
+  let bgStyle = "bg-[url('https://www.transparenttextures.com/patterns/checkerboard.png')] bg-white"; // Default Transparent/Checker
+
+  if (forceBackground === 'white') {
+      bgStyle = "bg-white";
+  } else if (forceBackground === 'dark') {
+      bgStyle = "bg-gray-800";
+  } else if (forceBackground === 'transparent') {
+      bgStyle = "bg-[url('https://www.transparenttextures.com/patterns/checkerboard.png')] bg-white";
+  } else if (forceBackground === 'none') {
+      bgStyle = "bg-transparent"; // Shows parent background
+  } else {
+      // Automatic fallback if no force prop
+      let useDarkBg = false;
+      if (tint) {
+        const r = parseInt(tint.slice(1, 3), 16);
+        const g = parseInt(tint.slice(3, 5), 16);
+        const b = parseInt(tint.slice(5, 7), 16);
+        const luminance = 0.299 * r + 0.587 * g + 0.114 * b;
+        if (luminance > 180) useDarkBg = true;
+      }
+      bgStyle = useDarkBg ? "bg-gray-800" : "bg-[url('https://www.transparenttextures.com/patterns/checkerboard.png')] bg-white";
   }
 
-  const bgStyle = useDarkBg 
-    ? "bg-gray-800" 
-    : "bg-[url('https://www.transparenttextures.com/patterns/checkerboard.png')] bg-white";
-
   const containerClasses = fitContain 
-    ? `relative group border border-gray-600 rounded overflow-hidden shadow-sm ${bgStyle} flex items-center justify-center ${className || ''}`
-    : `relative group border border-gray-600 rounded overflow-hidden shadow-sm ${bgStyle} ${className || ''}`;
+    ? `relative group border border-gray-300 rounded overflow-hidden shadow-sm ${bgStyle} flex items-center justify-center ${className || ''}`
+    : `relative group border border-gray-300 rounded overflow-hidden shadow-sm ${bgStyle} ${className || ''}`;
 
   // Changed to 'cursor-crosshair' for better precision when picking
   const cursorClass = onPixelSelect ? 'cursor-crosshair' : 'cursor-default';

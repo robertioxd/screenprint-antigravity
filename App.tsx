@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { Layers, Printer, Wand2, Settings, Download, ScanEye, Package, ChevronDown, FileImage, FileArchive, Pipette, Maximize2, X, BookOpen } from 'lucide-react';
+import React, { useState, useEffect, useCallback } from 'react';
+import { Layers, Printer, Wand2, Settings, Download, ScanEye, Package, ChevronDown, FileImage, FileArchive, Pipette, Maximize2, X, BookOpen, Undo, Redo } from 'lucide-react';
 import UploadZone from './components/UploadZone';
 import PaletteManager from './components/PaletteManager';
 import LayerPreview from './components/LayerPreview';
@@ -19,7 +19,12 @@ const App: React.FC = () => {
   const [originalImage, setOriginalImage] = useState<ImageData | null>(null);
   const [compositeImage, setCompositeImage] = useState<ImageData | null>(null);
   const [palette, setPalette] = useState<PaletteColor[]>([]);
+  
+  // Layer & History State
   const [layers, setLayers] = useState<Layer[]>([]);
+  const [history, setHistory] = useState<Layer[][]>([]);
+  const [historyIndex, setHistoryIndex] = useState(-1);
+
   const [status, setStatus] = useState<ProcessingStatus>(ProcessingStatus.IDLE);
   const [activeTab, setActiveTab] = useState<'original' | 'separation' | 'halftone' | 'compare' | 'guide'>('original');
   const [engineReady, setEngineReady] = useState(false);
@@ -53,11 +58,57 @@ const App: React.FC = () => {
     setOriginalImage(data);
     setPalette([]);
     setLayers([]);
+    setHistory([]);
+    setHistoryIndex(-1);
     setCompositeImage(null);
     setStatus(ProcessingStatus.IDLE);
     setActiveTab('original');
     setIsPickerActive(false);
   };
+
+  // --- UNDO / REDO LOGIC ---
+  const updateLayersWithHistory = (newLayers: Layer[]) => {
+      // 1. Slice history if we are in the middle of the stack
+      const currentHistory = history.slice(0, historyIndex + 1);
+      
+      // 2. Add current state to history (Max 10 steps to save memory with ImageData)
+      const newHistory = [...currentHistory, newLayers];
+      if (newHistory.length > 10) newHistory.shift();
+
+      setHistory(newHistory);
+      setHistoryIndex(newHistory.length - 1);
+      setLayers(newLayers);
+  };
+
+  const handleUndo = () => {
+      if (historyIndex > 0) {
+          const prevIndex = historyIndex - 1;
+          setLayers(history[prevIndex]);
+          setHistoryIndex(prevIndex);
+      } else if (historyIndex === 0) {
+          // If at index 0, check if we want to clear or just keep 0?
+          // Usually index 0 is the "start".
+          setLayers(history[0]);
+          setHistoryIndex(0);
+      }
+  };
+
+  const handleRedo = () => {
+      if (historyIndex < history.length - 1) {
+          const nextIndex = historyIndex + 1;
+          setLayers(history[nextIndex]);
+          setHistoryIndex(nextIndex);
+      }
+  };
+
+  // When running separation, we initialize history
+  const initializeLayerHistory = (initialLayers: Layer[]) => {
+      setHistory([initialLayers]);
+      setHistoryIndex(0);
+      setLayers(initialLayers);
+  };
+
+  // --- END UNDO/REDO ---
 
   const runAnalysis = async (numColors: number) => {
     if (!originalImage) return;
@@ -92,15 +143,11 @@ const App: React.FC = () => {
             targetW = Math.round(targetH * aspectRatio);
         }
 
-        // Allow some tolerance to avoid unnecessary resizing (e.g. rounding errors)
+        // Allow some tolerance to avoid unnecessary resizing
         if (Math.abs(targetW - originalImage.width) > 2 || Math.abs(targetH - originalImage.height) > 2) {
             setStatus(ProcessingStatus.RESIZING);
-            await new Promise(r => setTimeout(r, 20)); // UI refresh
-            
-            // Resize image using Python/Lanczos
+            await new Promise(r => setTimeout(r, 20)); 
             workingImage = await resizeImage(originalImage, targetW, targetH);
-            
-            // Update original image state to reflect the new working resolution
             setOriginalImage(workingImage);
         }
 
@@ -108,7 +155,7 @@ const App: React.FC = () => {
         await new Promise(r => setTimeout(r, 50));
         
         const result = await performSeparation(workingImage, palette, advancedConfig);
-        setLayers(result);
+        initializeLayerHistory(result);
         
         setStatus(ProcessingStatus.COMPOSITING);
         const comp = await generateComposite(result, workingImage.width, workingImage.height, advancedConfig);
@@ -134,9 +181,9 @@ const App: React.FC = () => {
              const htData = await applyHalftone(layer.data, advancedConfig);
              halftonedLayers.push({ ...layer, data: htData });
         }
-        setLayers(halftonedLayers);
+        updateLayersWithHistory(halftonedLayers);
+        
         setStatus(ProcessingStatus.COMPOSITING);
-        // Ensure we use the current image dimensions (which might be resized)
         const currentWidth = layers[0].data.width;
         const currentHeight = layers[0].data.height;
         
@@ -162,7 +209,7 @@ const App: React.FC = () => {
       setPalette([...palette, newColor]);
   };
 
-  // Update composite whenever layers or configs change
+  // Update composite whenever layers or configs change (debounced composite)
   useEffect(() => {
     if (layers.length > 0 && (activeTab === 'separation' || activeTab === 'halftone' || activeTab === 'compare')) {
         const updateComposite = async () => {
@@ -181,8 +228,9 @@ const App: React.FC = () => {
       if (action === 'delete') {
           if (window.confirm(`¿Estás seguro de que deseas eliminar permanentemente el canal ${layer.color.hex}?`)) {
               setPreviewLayerIndex(null);
-              setLayers(prev => prev.filter(l => l.id !== layer.id));
-              setPalette(prev => prev.filter(p => p.id !== layer.color.id));
+              const newLayers = layers.filter(l => l.id !== layer.id);
+              updateLayersWithHistory(newLayers);
+              // We don't remove palette color just in case they want to use it again or undo
           }
       } else {
           setModalMode(action);
@@ -197,7 +245,7 @@ const App: React.FC = () => {
           ...targetLayer,
           color: { ...targetLayer.color, hex: newHex, rgb: hexToRgb(newHex) }
       };
-      setLayers(newLayers);
+      updateLayersWithHistory(newLayers);
       setModalMode('view');
   };
 
@@ -220,7 +268,7 @@ const App: React.FC = () => {
           return l;
       });
       
-      setLayers(newLayerList);
+      updateLayersWithHistory(newLayerList);
       setModalMode('view');
   };
 
@@ -262,7 +310,7 @@ const App: React.FC = () => {
           }
       });
       
-      setLayers(finalNewLayers);
+      updateLayersWithHistory(finalNewLayers);
       setPreviewLayerIndex(null);
       setModalMode('view');
   };
@@ -280,6 +328,30 @@ const App: React.FC = () => {
           </div>
           <h1 className="text-xl font-bold tracking-tight text-white">ScreenPrint <span className="text-blue-500">Pro</span></h1>
         </div>
+        
+        {/* UNDO / REDO CONTROLS */}
+        {layers.length > 0 && (
+             <div className="flex items-center gap-1 bg-gray-900 rounded-lg p-1 border border-gray-700 absolute left-1/2 transform -translate-x-1/2">
+                <button 
+                    onClick={handleUndo} 
+                    disabled={historyIndex <= 0}
+                    className="p-2 text-gray-400 hover:text-white hover:bg-gray-700 rounded disabled:opacity-30 disabled:hover:bg-transparent transition-colors"
+                    title="Undo"
+                >
+                    <Undo className="w-4 h-4" />
+                </button>
+                <div className="w-px h-4 bg-gray-700 mx-1"></div>
+                <button 
+                    onClick={handleRedo} 
+                    disabled={historyIndex >= history.length - 1}
+                    className="p-2 text-gray-400 hover:text-white hover:bg-gray-700 rounded disabled:opacity-30 disabled:hover:bg-transparent transition-colors"
+                    title="Redo"
+                >
+                    <Redo className="w-4 h-4" />
+                </button>
+             </div>
+        )}
+
         <div className="flex gap-4 items-center">
             {!engineReady && (
                 <div className="flex items-center gap-2 text-yellow-400 text-sm animate-pulse">
@@ -449,15 +521,16 @@ const App: React.FC = () => {
                     key={layer.id} 
                     className="space-y-2 group animate-in slide-in-from-bottom-4 duration-300 relative"
                   >
-                    <div className="flex items-center justify-between text-gray-400 text-[10px] uppercase font-bold bg-gray-900 p-3 rounded-t-lg border-x border-t border-gray-800 group-hover:bg-gray-850 transition-colors cursor-pointer" onClick={() => setPreviewLayerIndex(index)}>
-                       <span className="flex items-center gap-2"><span className="w-3 h-3 rounded-full shadow-sm ring-1 ring-white/10" style={{backgroundColor: layer.color.hex}}></span>{layer.color.hex}</span>
+                    {/* Updated Header Style for White Card Look */}
+                    <div className="flex items-center justify-between text-gray-800 text-[10px] uppercase font-bold bg-white p-3 rounded-t-lg border-x border-t border-gray-200 group-hover:bg-gray-50 transition-colors cursor-pointer" onClick={() => setPreviewLayerIndex(index)}>
+                       <span className="flex items-center gap-2"><span className="w-3 h-3 rounded-full shadow-sm ring-1 ring-black/10" style={{backgroundColor: layer.color.hex}}></span>{layer.color.hex}</span>
                        <div className="flex items-center gap-2">
                             <span className="opacity-50 text-[9px]">{activeTab === 'halftone' ? 'AM' : 'SEP'}</span>
-                            <Maximize2 className="w-3 h-3 opacity-0 group-hover:opacity-100 transition-opacity text-blue-400" />
+                            <Maximize2 className="w-3 h-3 opacity-0 group-hover:opacity-100 transition-opacity text-blue-600" />
                        </div>
                     </div>
                     <div 
-                        className="border-x border-b border-gray-800 rounded-b-lg overflow-hidden shadow-lg group-hover:shadow-blue-500/5 transition-all cursor-zoom-in relative"
+                        className="border-x border-b border-gray-200 rounded-b-lg overflow-hidden shadow-lg group-hover:shadow-blue-500/20 transition-all cursor-zoom-in relative bg-white"
                         onClick={() => setPreviewLayerIndex(index)}
                     >
                       <LayerPreview 
@@ -465,8 +538,9 @@ const App: React.FC = () => {
                         width={layer.data.width} 
                         height={layer.data.height} 
                         tint={activeTab === 'separation' ? layer.color.hex : undefined} 
+                        forceBackground="white" 
                       />
-                      <div className="absolute inset-0 bg-blue-500/10 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none"></div>
+                      <div className="absolute inset-0 bg-blue-500/5 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none"></div>
                     </div>
                   </div>
                 ))}
