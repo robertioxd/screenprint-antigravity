@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Layers, Printer, Wand2, Settings, Download, ScanEye, Package, ChevronDown, FileImage, FileArchive, Pipette, Maximize2, X, BookOpen, Undo, Redo } from 'lucide-react';
+import { Layers, Printer, Wand2, Settings, Download, ScanEye, Package, ChevronDown, FileImage, FileArchive, Pipette, Maximize2, X, BookOpen, Undo, Redo, Eye, EyeOff } from 'lucide-react';
 import UploadZone from './components/UploadZone';
 import PaletteManager from './components/PaletteManager';
 import LayerPreview from './components/LayerPreview';
@@ -235,6 +235,12 @@ const App: React.FC = () => {
       } else {
           setModalMode(action);
       }
+  };
+
+  const toggleLayerVisibility = (index: number) => {
+      const newLayers = [...layers];
+      newLayers[index] = { ...newLayers[index], visible: !newLayers[index].visible };
+      updateLayersWithHistory(newLayers);
   };
 
   const handleEditColorSave = (newHex: string) => {
@@ -519,14 +525,26 @@ const App: React.FC = () => {
                 {layers.map((layer, index) => (
                   <div 
                     key={layer.id} 
-                    className="space-y-2 group animate-in slide-in-from-bottom-4 duration-300 relative"
+                    className={`space-y-2 group animate-in slide-in-from-bottom-4 duration-300 relative ${!layer.visible ? 'opacity-50 grayscale' : ''}`}
                   >
                     {/* Updated Header Style for White Card Look */}
-                    <div className="flex items-center justify-between text-gray-800 text-[10px] uppercase font-bold bg-white p-3 rounded-t-lg border-x border-t border-gray-200 group-hover:bg-gray-50 transition-colors cursor-pointer" onClick={() => setPreviewLayerIndex(index)}>
-                       <span className="flex items-center gap-2"><span className="w-3 h-3 rounded-full shadow-sm ring-1 ring-black/10" style={{backgroundColor: layer.color.hex}}></span>{layer.color.hex}</span>
-                       <div className="flex items-center gap-2">
-                            <span className="opacity-50 text-[9px]">{activeTab === 'halftone' ? 'AM' : 'SEP'}</span>
-                            <Maximize2 className="w-3 h-3 opacity-0 group-hover:opacity-100 transition-opacity text-blue-600" />
+                    <div className="flex items-center justify-between text-gray-800 text-[10px] uppercase font-bold bg-white p-3 rounded-t-lg border-x border-t border-gray-200 group-hover:bg-gray-50 transition-colors">
+                       <div className="flex items-center gap-2 cursor-pointer" onClick={() => setPreviewLayerIndex(index)}>
+                           <span className="w-3 h-3 rounded-full shadow-sm ring-1 ring-black/10" style={{backgroundColor: layer.color.hex}}></span>
+                           {layer.color.hex}
+                       </div>
+                       <div className="flex items-center gap-3">
+                            <button 
+                                onClick={(e) => { e.stopPropagation(); toggleLayerVisibility(index); }}
+                                className="text-gray-400 hover:text-gray-900 transition-colors"
+                                title={layer.visible ? "Hide Layer" : "Show Layer"}
+                            >
+                                {layer.visible ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
+                            </button>
+                            <div className="flex items-center gap-2 cursor-pointer border-l border-gray-200 pl-3" onClick={() => setPreviewLayerIndex(index)}>
+                                <span className="opacity-50 text-[9px]">{activeTab === 'halftone' ? 'AM' : 'SEP'}</span>
+                                <Maximize2 className="w-3 h-3 opacity-0 group-hover:opacity-100 transition-opacity text-blue-600" />
+                            </div>
                        </div>
                     </div>
                     <div 

@@ -32,8 +32,14 @@ export interface AdvancedConfig {
   outputSizeInches: number;
   outputMeasurement: 'width' | 'height';
 
+  // Pre-processing (OpenCV)
+  denoiseStrength: number; // Bilateral Filter Sigma Color
+  denoiseSpatial: number;  // Bilateral Filter Sigma Space
+
   // Vector Specific
   useVectorAntiAliasing: boolean;
+  vectorAASigma: number;
+  vectorAAThreshold: number;
 
   // Raster Specific
   useRasterAdaptive: boolean;
@@ -52,8 +58,8 @@ export interface AdvancedConfig {
 }
 
 export const DEFAULT_CONFIG: AdvancedConfig = {
-  sampleSize: 20000,
-  inkOpacity: 0.95, 
+  sampleSize: 25000,
+  inkOpacity: 0.90, 
   kL: 1.0,
   kC: 1.0,
   kH: 1.0,
@@ -61,15 +67,21 @@ export const DEFAULT_CONFIG: AdvancedConfig = {
   separationType: 'vector',
   
   outputDpi: 300,
-  outputSizeInches: 3, // Changed from 12 to 3
+  outputSizeInches: 3, 
   outputMeasurement: 'width',
 
+  denoiseStrength: 10, // New default for Bilateral
+  denoiseSpatial: 5,   // New default for Bilateral
+
   useVectorAntiAliasing: true,
+  vectorAASigma: 1.0,
+  vectorAAThreshold: 127,
+
   useRasterAdaptive: true,
 
-  cleanupStrength: 0, // Changed from 3 to 0
+  cleanupStrength: 1, 
   smoothEdges: 0,
-  minCoverage: 0.2, // Changed from 0.5 to 0.2
+  minCoverage: 0.2,
 
   halftoneType: 'am',
   halftoneLpi: 45, 

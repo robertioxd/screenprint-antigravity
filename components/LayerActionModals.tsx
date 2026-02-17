@@ -253,6 +253,8 @@ export const ChopModal: React.FC<ChopModalProps> = ({ layer, onClose, onGenerate
 
     const handleApplyManual = () => onApply(manualLayers, []);
 
+    const currentManualLayer = manualLayers[activeManualIndex];
+
     return (
         <div className="bg-gray-100 rounded-lg shadow-2xl w-full max-w-6xl flex flex-col overflow-hidden max-h-[95vh] h-[850px]">
             <div className="bg-gray-200 px-4 py-2 border-b border-gray-300 flex justify-between items-center shrink-0">
@@ -361,10 +363,10 @@ export const ChopModal: React.FC<ChopModalProps> = ({ layer, onClose, onGenerate
                         >
                             <div 
                                 style={{ 
-                                    transform: `scale(${zoom})`, 
-                                    transformOrigin: 'center center',
+                                    width: currentManualLayer ? currentManualLayer.data.width * zoom : 0,
+                                    height: currentManualLayer ? currentManualLayer.data.height * zoom : 0,
                                 }} 
-                                className="transition-transform duration-100 ease-out shadow-2xl border border-gray-600"
+                                className="shadow-2xl border border-gray-600 bg-white flex-shrink-0"
                             >
                                 <canvas 
                                     ref={canvasRef} 
@@ -372,7 +374,7 @@ export const ChopModal: React.FC<ChopModalProps> = ({ layer, onClose, onGenerate
                                     onMouseMove={handleMouseMove} 
                                     onMouseUp={handleMouseUp} 
                                     onDoubleClick={handleDoubleClick} 
-                                    className="cursor-crosshair block bg-black/20" 
+                                    className="cursor-crosshair block bg-black/20 w-full h-full" 
                                     style={{ 
                                         imageRendering: zoom > 1.2 ? 'pixelated' : 'auto' 
                                     }}

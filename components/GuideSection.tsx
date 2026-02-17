@@ -1,5 +1,5 @@
 import React from 'react';
-import { Layers, Image as ImageIcon, Sparkles, Feather, Grid3X3, Ruler, Info, BookOpen, Wand2, Calculator } from 'lucide-react';
+import { Layers, Image as ImageIcon, Sparkles, Feather, Grid3X3, Ruler, Info, BookOpen, Wand2, Calculator, Droplets, ScanFace } from 'lucide-react';
 
 const GuideSection: React.FC = () => {
   return (
@@ -18,53 +18,106 @@ const GuideSection: React.FC = () => {
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
 
+        {/* 0. Pre-procesamiento */}
+        <div className="bg-gray-900 border border-gray-800 rounded-xl p-6 shadow-xl md:col-span-2">
+            <h3 className="text-lg font-bold text-white mb-4 flex items-center gap-2 border-b border-gray-800 pb-2">
+                <Droplets className="w-5 h-5 text-cyan-400" />
+                0. Pre-procesamiento (Denoise)
+            </h3>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div>
+                    <p className="text-gray-400 text-sm mb-4 leading-relaxed">
+                        Antes de separar colores, es crucial limpiar la imagen original. Utilizamos un <strong>Filtro Bilateral</strong>, una técnica avanzada que suaviza las superficies planas (eliminando ruido JPG o grano de escaneo) pero <strong>preserva los bordes afilados</strong>.
+                    </p>
+                    <div className="flex gap-4 items-start">
+                        <div className="bg-cyan-900/20 p-2 rounded-lg border border-cyan-800/50 mt-1">
+                             <ScanFace className="w-5 h-5 text-cyan-400"/>
+                        </div>
+                        <div>
+                            <h4 className="font-bold text-cyan-300 text-sm uppercase">¿Por qué es importante?</h4>
+                            <p className="text-xs text-gray-500 mt-1">
+                                A diferencia de un desenfoque normal que "emborrona" todo, este filtro mantiene la definición de tu diseño mientras simplifica los colores internos. Esto resulta en separaciones mucho más limpias y fáciles de vectorizar o tramar.
+                            </p>
+                        </div>
+                    </div>
+                </div>
+                <div className="space-y-3 bg-gray-800/50 p-4 rounded-lg border border-gray-700">
+                     <div className="space-y-1">
+                        <div className="flex justify-between items-center">
+                            <span className="text-xs font-bold text-gray-300 uppercase">Intensidad Color (SigmaColor)</span>
+                            <span className="text-[10px] bg-gray-700 px-1.5 rounded text-gray-400">Default: 10</span>
+                        </div>
+                        <p className="text-[11px] text-gray-500 leading-tight">
+                            Controla cuánto se mezclan colores similares. Valores altos crean un efecto "Cartoon" o posterizado, ideal para reducir la cantidad de colores en una fotografía.
+                        </p>
+                     </div>
+                     <div className="w-full h-px bg-gray-700"></div>
+                     <div className="space-y-1">
+                        <div className="flex justify-between items-center">
+                            <span className="text-xs font-bold text-gray-300 uppercase">Espacio (SigmaSpace)</span>
+                            <span className="text-[10px] bg-gray-700 px-1.5 rounded text-gray-400">Default: 5</span>
+                        </div>
+                        <p className="text-[11px] text-gray-500 leading-tight">
+                            Define el radio de influencia. Valores altos afectan áreas más grandes, suavizando texturas rugosas.
+                        </p>
+                     </div>
+                </div>
+            </div>
+        </div>
+
         {/* 1. Motores de Separación */}
         <div className="bg-gray-900 border border-gray-800 rounded-xl p-6 shadow-xl">
           <h3 className="text-lg font-bold text-white mb-4 flex items-center gap-2 border-b border-gray-800 pb-2">
             <Wand2 className="w-5 h-5 text-purple-400" />
             1. Motores de Separación
           </h3>
-          <div className="space-y-4">
-            <div className="flex gap-4">
-              <div className="bg-blue-900/20 p-3 rounded-lg h-fit border border-blue-800/50">
-                <Layers className="w-6 h-6 text-blue-400" />
-              </div>
-              <div>
-                <h4 className="font-bold text-blue-300 text-sm uppercase">Vector (Sólido)</h4>
-                <p className="text-gray-400 text-sm mt-1 leading-relaxed">
-                  Ideal para ilustraciones planas, logotipos y dibujos animados ("Spot Color"). 
-                  Cada píxel se asigna al 100% a un solo color. Genera bordes duros y definidos.
-                  <br/><span className="text-xs text-gray-500 italic">Recomendado para: Diseños vectoriales, textos, logos deportivos.</span>
-                </p>
-              </div>
+          <div className="space-y-6">
+            
+            {/* Vector Mode */}
+            <div className="space-y-3">
+                <div className="flex gap-4">
+                    <div className="bg-blue-900/20 p-3 rounded-lg h-fit border border-blue-800/50">
+                        <Layers className="w-6 h-6 text-blue-400" />
+                    </div>
+                    <div>
+                        <h4 className="font-bold text-blue-300 text-sm uppercase">Vector (Sólido)</h4>
+                        <p className="text-gray-400 text-xs mt-1 leading-relaxed">
+                        Cada píxel se asigna al 100% a un solo color ("Spot Color"). Genera bordes duros.
+                        </p>
+                    </div>
+                </div>
+                
+                {/* Anti-Aliasing Explanation */}
+                <div className="ml-14 bg-blue-950/30 p-3 rounded border border-blue-900/50">
+                    <div className="text-xs font-bold text-blue-200 uppercase mb-1 flex items-center gap-2">
+                        <Wand2 className="w-3 h-3"/> Anti-Aliasing
+                    </div>
+                    <p className="text-[11px] text-gray-400 leading-relaxed mb-2">
+                        Suaviza los bordes dentados ("pixelados") de las formas sólidas aplicando un desenfoque gaussiano seguido de un umbral duro (threshold).
+                    </p>
+                    <ul className="text-[10px] text-gray-500 space-y-1 list-disc pl-3">
+                        <li><strong>Sigma:</strong> Radio del suavizado. Aumenta para curvas más orgánicas.</li>
+                        <li><strong>Threshold:</strong> Punto de corte. Define el grosor de la forma final.</li>
+                    </ul>
+                </div>
             </div>
-            <div className="flex gap-4">
+
+            {/* Raster Mode */}
+            <div className="flex gap-4 pt-4 border-t border-gray-800">
               <div className="bg-green-900/20 p-3 rounded-lg h-fit border border-green-800/50">
                 <ImageIcon className="w-6 h-6 text-green-400" />
               </div>
               <div>
                 <h4 className="font-bold text-green-300 text-sm uppercase">Raster (Simulated Process)</h4>
-                <p className="text-gray-400 text-sm mt-1 leading-relaxed">
-                  Ideal para fotografías y degradados complejos. Utiliza transparencias y mezclas de color. 
-                  Calcula qué tanto porcentaje de tinta se necesita en cada píxel basándose en CIEDE2000.
-                  <br/><span className="text-xs text-gray-500 italic">Recomendado para: Fotos, arte digital complejo, humo, fuego.</span>
+                <p className="text-gray-400 text-xs mt-1 leading-relaxed">
+                  Calcula porcentajes de tinta (transparencias) basados en la similitud de color (CIEDE2000). Ideal para degradados, humo y fotos.
                 </p>
+                 <div className="mt-2 text-[10px] bg-green-900/20 text-green-200 px-2 py-1 rounded inline-block border border-green-800/30">
+                   <strong>Adaptive Threshold:</strong> Ajusta dinámicamente el rango de captura según la proximidad de otros colores en la paleta.
+                 </div>
               </div>
             </div>
             
-            <div className="mt-4 p-3 bg-gray-800 rounded border border-gray-700">
-               <div className="flex items-center gap-2 mb-1">
-                   <Calculator className="w-4 h-4 text-green-500" />
-                   <h4 className="font-bold text-green-400 text-xs uppercase">Adaptive Threshold (Umbral Adaptativo)</h4>
-               </div>
-               <p className="text-gray-400 text-xs leading-relaxed">
-                   Calcula automáticamente el rango de captura de color basándose en la distancia entre los colores de tu paleta.
-                   <br/><br/>
-                   <strong className="text-gray-300">¿Cuándo usarlo?</strong> En imágenes con degradados sutiles (ej. tonos de piel) donde los colores de la paleta son muy similares. Ayuda a fusionarlos suavemente.
-                   <br/><br/>
-                   <strong className="text-gray-300">¿Cuándo apagarlo?</strong> En imágenes de alto contraste (ej. Negro sobre Blanco) o diseños con fondos sólidos. Si notas "ruido" o suciedad en el fondo, apágalo para usar el umbral estándar fijo.
-               </p>
-            </div>
           </div>
         </div>
 
@@ -80,8 +133,7 @@ const GuideSection: React.FC = () => {
                 <Sparkles className="w-4 h-4" /> Limpieza Inteligente (Cleanup)
               </div>
               <p className="text-gray-400 text-xs pl-6">
-                Elimina "basura" o ruido. El valor (0-10) es relativo al tamaño de la capa. 
-                Úsalo para quitar puntos aislados que son demasiado pequeños para revelarse en la malla.
+                Elimina "basura" o ruido post-separación usando operaciones morfológicas (Apertura/Cierre). El valor (1-10) escala con el tamaño de la imagen.
               </p>
             </li>
             <li className="space-y-1">
@@ -89,8 +141,7 @@ const GuideSection: React.FC = () => {
                 <Feather className="w-4 h-4" /> Suavizado de Bordes (Smooth)
               </div>
               <p className="text-gray-400 text-xs pl-6">
-                Aplica un desenfoque gaussiano y re-enfoca. Convierte bordes pixelados (aliasing) en curvas suaves.
-                Vital si la imagen original es de baja calidad o tiene bordes dentados.
+                Aplica un desenfoque gaussiano al canal final. Útil si el resultado vectorizado quedó demasiado "duro" o angular.
               </p>
             </li>
             <li className="space-y-1">
@@ -98,8 +149,7 @@ const GuideSection: React.FC = () => {
                 <Info className="w-4 h-4" /> Cobertura Mínima
               </div>
               <p className="text-gray-400 text-xs pl-6">
-                Descarta automáticamente canales que tienen muy poca información (ej. &lt; 0.5% del área).
-                Ayuda a evitar generar positivos para capas que apenas son visibles.
+                Descarta automáticamente canales que tienen muy poca información (ej. &lt; 0.5% del área total). Ahorra tiempo y materiales.
               </p>
             </li>
           </ul>
@@ -166,7 +216,7 @@ const GuideSection: React.FC = () => {
                 4. Resolución y Tamaño de Salida
             </h3>
             <p className="text-gray-400 text-sm mb-4">
-                ScreenPrint Pro reescala tu imagen internamente antes de procesarla para asegurar que los puntos de trama tengan la resolución correcta.
+                ScreenPrint Pro reescala tu imagen internamente usando <strong>OpenCV (Lanczos4)</strong> antes de procesarla para asegurar que los puntos de trama tengan la resolución correcta.
             </p>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                 <div className="bg-gray-800 p-4 rounded text-center">
@@ -180,9 +230,9 @@ const GuideSection: React.FC = () => {
                     <p className="text-[10px] text-gray-500 mt-2">Configura el ancho en pulgadas al tamaño real que imprimirás en la camiseta.</p>
                 </div>
                 <div className="bg-gray-800 p-4 rounded text-center">
-                    <div className="text-2xl font-bold text-white mb-1">Lanczos</div>
+                    <div className="text-2xl font-bold text-white mb-1">Lanczos4</div>
                     <div className="text-xs text-gray-400 uppercase font-bold">Algoritmo</div>
-                    <p className="text-[10px] text-gray-500 mt-2">Usamos interpolación Lanczos para aumentar la resolución sin perder nitidez.</p>
+                    <p className="text-[10px] text-gray-500 mt-2">Usamos interpolación Lanczos de OpenCV para aumentar la resolución sin perder nitidez.</p>
                 </div>
             </div>
         </div>

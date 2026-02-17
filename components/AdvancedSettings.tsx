@@ -1,6 +1,6 @@
 import React from 'react';
 import { AdvancedConfig } from '../types';
-import { Settings2, Info, Calculator, Eye, Layers, Image as ImageIcon, Eraser, Scissors, Grid3X3, Sun, Wand2, Ghost, Sparkles, Feather } from 'lucide-react';
+import { Settings2, Info, Calculator, Eye, Layers, Image as ImageIcon, Eraser, Scissors, Grid3X3, Sun, Wand2, Ghost, Sparkles, Feather, Droplets } from 'lucide-react';
 
 interface AdvancedSettingsProps {
   config: AdvancedConfig;
@@ -30,6 +30,42 @@ const AdvancedSettings: React.FC<AdvancedSettingsProps> = ({ config, onChange, i
       {isOpen && (
         <div className="p-4 space-y-4 border-t border-gray-700 text-xs">
           
+           {/* SECCIÓN 0: PRE-PROCESAMIENTO */}
+           <div className="space-y-4 pb-3 border-b border-gray-700">
+             <label className="text-gray-400 font-bold uppercase flex items-center gap-1">
+                Pre-procesamiento (Denoise)
+                <span title="Filtro Bilateral: Suaviza ruido conservando bordes"><Droplets className="w-3 h-3 opacity-50" /></span>
+             </label>
+
+             <div className="space-y-1">
+                <div className="flex justify-between text-gray-400">
+                    <span className="text-[10px]">Intensidad Color (SigmaColor)</span>
+                    <span className="text-blue-400 font-mono text-[10px]">{config.denoiseStrength}</span>
+                </div>
+                <input 
+                  type="range" min="0" max="100" step="5" 
+                  value={config.denoiseStrength}
+                  onChange={(e) => updateField('denoiseStrength', parseInt(e.target.value))}
+                  className="w-full h-1 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-blue-500"
+                  title="Cuánto se mezclan colores similares. Valores altos = efecto cartoon."
+                />
+             </div>
+             
+             <div className="space-y-1">
+                <div className="flex justify-between text-gray-400">
+                    <span className="text-[10px]">Espacio (SigmaSpace)</span>
+                    <span className="text-blue-400 font-mono text-[10px]">{config.denoiseSpatial}</span>
+                </div>
+                <input 
+                  type="range" min="0" max="20" step="1" 
+                  value={config.denoiseSpatial}
+                  onChange={(e) => updateField('denoiseSpatial', parseInt(e.target.value))}
+                  className="w-full h-1 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-blue-500"
+                  title="Distancia de mezcla. Valores altos afectan áreas más grandes."
+                />
+             </div>
+           </div>
+
           {/* SECCIÓN 1: MOTOR DE SEPARACIÓN */}
           <div className="space-y-2 pb-3 border-b border-gray-700">
              <label className="text-gray-400 font-bold uppercase flex items-center gap-1">
@@ -72,6 +108,34 @@ const AdvancedSettings: React.FC<AdvancedSettingsProps> = ({ config, onChange, i
                         </div>
                     </label>
                     <p className="text-[9px] text-gray-500 mt-1 pl-5">Suaviza los bordes dentados (Gaussian Blur).</p>
+                    {config.useVectorAntiAliasing && (
+                        <div className="mt-2 pl-5 space-y-2 border-l-2 border-gray-700 ml-1">
+                             <div className="space-y-1">
+                                <div className="flex justify-between text-gray-400">
+                                    <span className="text-[10px]">AA Radius (Sigma)</span>
+                                    <span className="text-blue-400 font-mono text-[10px]">{config.vectorAASigma}</span>
+                                </div>
+                                <input 
+                                  type="range" min="0.1" max="5.0" step="0.1" 
+                                  value={config.vectorAASigma}
+                                  onChange={(e) => updateField('vectorAASigma', parseFloat(e.target.value))}
+                                  className="w-full h-1 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-blue-500"
+                                />
+                             </div>
+                             <div className="space-y-1">
+                                <div className="flex justify-between text-gray-400">
+                                    <span className="text-[10px]">AA Threshold (Cutoff)</span>
+                                    <span className="text-blue-400 font-mono text-[10px]">{config.vectorAAThreshold}</span>
+                                </div>
+                                <input 
+                                  type="range" min="1" max="254" step="1" 
+                                  value={config.vectorAAThreshold}
+                                  onChange={(e) => updateField('vectorAAThreshold', parseInt(e.target.value))}
+                                  className="w-full h-1 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-blue-500"
+                                />
+                             </div>
+                        </div>
+                    )}
                  </div>
               ) : (
                 <div className="bg-gray-800 p-2 rounded border border-gray-700 mb-2 space-y-3">

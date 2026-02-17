@@ -1,3 +1,4 @@
+
 import React, { useCallback, useState } from 'react';
 import { UploadCloud, FileType, Loader2 } from 'lucide-react';
 
@@ -26,9 +27,11 @@ const UploadZone: React.FC<UploadZoneProps> = ({ onImageLoad }) => {
             
             const arrayBuffer = await file.arrayBuffer();
             
-            // Read the PSD. We only strictly need the composite image for separation
+            // Read the PSD. We only strictly need the composite image for separation.
+            // In a browser environment, ag-psd typically returns the composite image in the 'canvas' property.
             const psd = readPsd(arrayBuffer);
             
+            // Fix: Property 'image' does not exist on type 'Psd'. Relying on psd.canvas for the composite image.
             if (psd && psd.canvas) {
                 // If ag-psd returns a canvas directly (browser environment sometimes)
                 const ctx = psd.canvas.getContext('2d');
@@ -36,15 +39,6 @@ const UploadZone: React.FC<UploadZoneProps> = ({ onImageLoad }) => {
                     const imageData = ctx.getImageData(0, 0, psd.canvas.width, psd.canvas.height);
                     onImageLoad(imageData, file.name);
                 }
-            } else if (psd && psd.image) {
-                // Construct ImageData from raw pixel data
-                // psd.image.pixelData is Uint8ClampedArray (RGBA)
-                const imageData = new ImageData(
-                    psd.image.pixelData, 
-                    psd.width, 
-                    psd.height
-                );
-                onImageLoad(imageData, file.name);
             } else {
                 throw new Error("No composite image found in PSD. Please save with 'Maximize Compatibility'.");
             }
