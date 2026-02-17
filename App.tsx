@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Layers, Printer, Wand2, Settings, Download, ScanEye, Package, ChevronDown, FileImage, FileArchive, Pipette, Maximize2, X, BookOpen, Undo, Redo, Eye, EyeOff } from 'lucide-react';
+import { Layers, Printer, Wand2, Settings, Download, ScanEye, Package, ChevronDown, FileImage, FileArchive, Pipette, Maximize2, X, BookOpen, Undo, Redo, Eye, EyeOff, GripVertical, Palette, ScanFace, FileText } from 'lucide-react';
 import UploadZone from './components/UploadZone';
 import PaletteManager from './components/PaletteManager';
-import LayerPreview from './components/LayerPreview';
+import LayerPreview, { LayerViewMode } from './components/LayerPreview';
 import ComparisonView from './components/ComparisonView';
 import AdvancedSettings from './components/AdvancedSettings';
 import OutputSizePanel from './components/OutputSizePanel';
@@ -19,11 +19,13 @@ const App: React.FC = () => {
   const [originalImage, setOriginalImage] = useState<ImageData | null>(null);
   const [compositeImage, setCompositeImage] = useState<ImageData | null>(null);
   const [palette, setPalette] = useState<PaletteColor[]>([]);
+  const [shirtColor, setShirtColor] = useState('#111827'); // Default to Gray-900/Black
   
   // Layer & History State
   const [layers, setLayers] = useState<Layer[]>([]);
   const [history, setHistory] = useState<Layer[][]>([]);
   const [historyIndex, setHistoryIndex] = useState(-1);
+  const [layerViewModes, setLayerViewModes] = useState<Record<string, LayerViewMode>>({});
 
   const [status, setStatus] = useState<ProcessingStatus>(ProcessingStatus.IDLE);
   const [activeTab, setActiveTab] = useState<'original' | 'separation' | 'halftone' | 'compare' | 'guide'>('original');
@@ -40,6 +42,7 @@ const App: React.FC = () => {
   // Layer Management State
   const [previewLayerIndex, setPreviewLayerIndex] = useState<number | null>(null);
   const [modalMode, setModalMode] = useState<'view' | 'chop' | 'merge' | 'edit'>('view');
+  const [draggedLayerIndex, setDraggedLayerIndex] = useState<number | null>(null);
 
   // Initialize Pyodide
   useEffect(() => {
@@ -60,6 +63,7 @@ const App: React.FC = () => {
     setLayers([]);
     setHistory([]);
     setHistoryIndex(-1);
+    setLayerViewModes({});
     setCompositeImage(null);
     setStatus(ProcessingStatus.IDLE);
     setActiveTab('original');
@@ -242,6 +246,10 @@ const App: React.FC = () => {
       newLayers[index] = { ...newLayers[index], visible: !newLayers[index].visible };
       updateLayersWithHistory(newLayers);
   };
+  
+  const setLayerViewMode = (id: string, mode: LayerViewMode) => {
+      setLayerViewModes(prev => ({ ...prev, [id]: mode }));
+  };
 
   const handleEditColorSave = (newHex: string) => {
       if (previewLayerIndex === null) return;
@@ -321,6 +329,30 @@ const App: React.FC = () => {
       setModalMode('view');
   };
 
+  // --- DRAG AND DROP HANDLERS ---
+  const handleDragStart = (e: React.DragEvent, index: number) => {
+    setDraggedLayerIndex(index);
+    // Standard effect allowed
+    e.dataTransfer.effectAllowed = "move";
+    // Optional: Set a clean drag image if needed, for now default is okay
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault(); // Necessary to allow dropping
+    e.dataTransfer.dropEffect = "move";
+  };
+
+  const handleDrop = (e: React.DragEvent, dropIndex: number) => {
+    e.preventDefault();
+    if (draggedLayerIndex === null || draggedLayerIndex === dropIndex) return;
+
+    const newLayers = [...layers];
+    const [movedLayer] = newLayers.splice(draggedLayerIndex, 1);
+    newLayers.splice(dropIndex, 0, movedLayer);
+
+    updateLayersWithHistory(newLayers);
+    setDraggedLayerIndex(null);
+  };
 
   return (
     <div className="min-h-screen flex flex-col h-screen overflow-hidden" onClick={() => {
@@ -512,40 +544,88 @@ const App: React.FC = () => {
                 )}
               </div>
             )}
-            {activeTab === 'compare' && <div className="w-full max-w-[95%] animate-in zoom-in-95 duration-300"><ComparisonView original={originalImage} composite={compositeImage} /></div>}
+            {activeTab === 'compare' && <div className="w-full max-w-[95%] animate-in zoom-in-95 duration-300"><ComparisonView original={originalImage} composite={compositeImage} shirtColor={shirtColor} onShirtColorChange={setShirtColor} /></div>}
             {(activeTab === 'separation' || activeTab === 'halftone') && (
               <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 w-full max-w-7xl animate-in fade-in duration-500">
                 <div className="col-span-full mb-6 bg-gray-900 p-8 rounded-xl border border-gray-800 shadow-2xl relative overflow-hidden group">
                     <div className="absolute top-0 left-0 w-1 h-full bg-blue-500 opacity-50"></div>
-                    <h3 className="text-white text-xs mb-6 font-bold flex items-center gap-2 uppercase tracking-widest opacity-70">
-                        <Settings className="w-4 h-4 text-blue-500" /> SIMULACIÓN DE ESTAMPADO
-                    </h3>
-                    {compositeImage && <div className="relative bg-black/50 flex items-center justify-center rounded-lg overflow-hidden border border-gray-700 min-h-[400px] shadow-inner"><LayerPreview imageData={compositeImage} width={compositeImage.width} height={compositeImage.height} /></div>}
+                    <div className="flex justify-between items-start mb-6">
+                        <h3 className="text-white text-xs font-bold flex items-center gap-2 uppercase tracking-widest opacity-70">
+                            <Settings className="w-4 h-4 text-blue-500" /> SIMULACIÓN DE ESTAMPADO
+                        </h3>
+                         {/* SHIRT COLOR PICKER FOR COMPOSITE PREVIEW */}
+                        <div className="flex items-center gap-2 bg-black/30 px-2 py-1 rounded-full border border-gray-700/50">
+                            <span className="text-[9px] text-gray-400 font-bold uppercase">Shirt Color</span>
+                            <input 
+                                type="color" 
+                                value={shirtColor} 
+                                onChange={(e) => setShirtColor(e.target.value)} 
+                                className="w-4 h-4 p-0 border-0 rounded-full cursor-pointer overflow-hidden"
+                            />
+                        </div>
+                    </div>
+                    {/* Changed bg-gray-900 to dynamic shirtColor style */}
+                    {compositeImage && <div className="relative flex items-center justify-center rounded-lg overflow-hidden border border-gray-700 min-h-[400px] shadow-inner transition-colors duration-300" style={{ backgroundColor: shirtColor }}><LayerPreview imageData={compositeImage} width={compositeImage.width} height={compositeImage.height} forceBackground="none" /></div>}
                 </div>
-                {layers.map((layer, index) => (
+                {layers.map((layer, index) => {
+                  const currentMode = layerViewModes[layer.id] || 'color';
+                  return (
                   <div 
                     key={layer.id} 
-                    className={`space-y-2 group animate-in slide-in-from-bottom-4 duration-300 relative ${!layer.visible ? 'opacity-50 grayscale' : ''}`}
+                    draggable={true}
+                    onDragStart={(e) => handleDragStart(e, index)}
+                    onDragOver={handleDragOver}
+                    onDrop={(e) => handleDrop(e, index)}
+                    className={`space-y-2 group animate-in slide-in-from-bottom-4 duration-300 relative ${!layer.visible ? 'opacity-50 grayscale' : ''} ${draggedLayerIndex === index ? 'opacity-50 cursor-grabbing' : 'cursor-grab'}`}
                   >
                     {/* Updated Header Style for White Card Look */}
-                    <div className="flex items-center justify-between text-gray-800 text-[10px] uppercase font-bold bg-white p-3 rounded-t-lg border-x border-t border-gray-200 group-hover:bg-gray-50 transition-colors">
-                       <div className="flex items-center gap-2 cursor-pointer" onClick={() => setPreviewLayerIndex(index)}>
-                           <span className="w-3 h-3 rounded-full shadow-sm ring-1 ring-black/10" style={{backgroundColor: layer.color.hex}}></span>
-                           {layer.color.hex}
-                       </div>
-                       <div className="flex items-center gap-3">
-                            <button 
-                                onClick={(e) => { e.stopPropagation(); toggleLayerVisibility(index); }}
-                                className="text-gray-400 hover:text-gray-900 transition-colors"
-                                title={layer.visible ? "Hide Layer" : "Show Layer"}
-                            >
-                                {layer.visible ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
-                            </button>
-                            <div className="flex items-center gap-2 cursor-pointer border-l border-gray-200 pl-3" onClick={() => setPreviewLayerIndex(index)}>
-                                <span className="opacity-50 text-[9px]">{activeTab === 'halftone' ? 'AM' : 'SEP'}</span>
-                                <Maximize2 className="w-3 h-3 opacity-0 group-hover:opacity-100 transition-opacity text-blue-600" />
+                    <div className="flex flex-col bg-white rounded-t-lg border-x border-t border-gray-200 group-hover:bg-gray-50 transition-colors">
+                        <div className="flex items-center justify-between p-3 pb-2">
+                            <div className="flex items-center gap-2">
+                                {/* Grip Icon for visual affordance */}
+                                <GripVertical className="w-3 h-3 text-gray-300 group-hover:text-gray-500 cursor-grab active:cursor-grabbing" />
+                                <div className="flex items-center gap-2 cursor-pointer" onClick={() => setPreviewLayerIndex(index)}>
+                                    <span className="w-3 h-3 rounded-full shadow-sm ring-1 ring-black/10" style={{backgroundColor: layer.color.hex}}></span>
+                                    <span className="text-[10px] text-gray-800 uppercase font-bold">{layer.color.hex}</span>
+                                </div>
                             </div>
-                       </div>
+                            <div className="flex items-center gap-3">
+                                <button 
+                                    onClick={(e) => { e.stopPropagation(); toggleLayerVisibility(index); }}
+                                    className="text-gray-400 hover:text-gray-900 transition-colors"
+                                    title={layer.visible ? "Hide Layer" : "Show Layer"}
+                                >
+                                    {layer.visible ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
+                                </button>
+                                <div className="flex items-center gap-2 cursor-pointer border-l border-gray-200 pl-3" onClick={() => setPreviewLayerIndex(index)}>
+                                    <Maximize2 className="w-3 h-3 text-gray-400 hover:text-blue-600 transition-colors" />
+                                </div>
+                            </div>
+                        </div>
+                        {/* View Mode Toggles */}
+                        <div className="flex px-2 pb-2 gap-1 justify-center">
+                            <button 
+                                onClick={(e) => { e.stopPropagation(); setLayerViewMode(layer.id, 'color'); }}
+                                className={`flex-1 flex items-center justify-center py-1 rounded text-[9px] font-bold uppercase transition-colors ${currentMode === 'color' ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-400 hover:bg-gray-200'}`}
+                                title="Color Preview"
+                            >
+                                <Palette className="w-3 h-3" />
+                            </button>
+                            <button 
+                                onClick={(e) => { e.stopPropagation(); setLayerViewMode(layer.id, 'mask'); }}
+                                className={`flex-1 flex items-center justify-center py-1 rounded text-[9px] font-bold uppercase transition-colors ${currentMode === 'mask' ? 'bg-gray-800 text-white' : 'bg-gray-100 text-gray-400 hover:bg-gray-200'}`}
+                                title="Alpha Mask (White Ink / Black Background)"
+                            >
+                                <ScanFace className="w-3 h-3" />
+                            </button>
+                            <button 
+                                onClick={(e) => { e.stopPropagation(); setLayerViewMode(layer.id, 'positive'); }}
+                                className={`flex-1 flex items-center justify-center py-1 rounded text-[9px] font-bold uppercase transition-colors ${currentMode === 'positive' ? 'bg-gray-800 text-white' : 'bg-gray-100 text-gray-400 hover:bg-gray-200'}`}
+                                title="Film Positive (Black Ink / White Background)"
+                            >
+                                <FileText className="w-3 h-3" />
+                            </button>
+                        </div>
                     </div>
                     <div 
                         className="border-x border-b border-gray-200 rounded-b-lg overflow-hidden shadow-lg group-hover:shadow-blue-500/20 transition-all cursor-zoom-in relative bg-white"
@@ -557,11 +637,12 @@ const App: React.FC = () => {
                         height={layer.data.height} 
                         tint={activeTab === 'separation' ? layer.color.hex : undefined} 
                         forceBackground="white" 
+                        viewMode={currentMode}
                       />
                       <div className="absolute inset-0 bg-blue-500/5 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none"></div>
                     </div>
                   </div>
-                ))}
+                )})}
               </div>
             )}
           </div>

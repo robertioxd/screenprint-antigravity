@@ -1,5 +1,7 @@
 import React, { useRef, useEffect, useState, memo } from 'react';
 
+export type LayerViewMode = 'color' | 'mask' | 'positive';
+
 interface LayerPreviewProps {
   imageData: ImageData | null;
   width: number;
@@ -9,7 +11,8 @@ interface LayerPreviewProps {
   onPixelSelect?: (hex: string) => void;
   className?: string;
   fitContain?: boolean;
-  forceBackground?: 'white' | 'transparent' | 'dark' | 'none'; // Added 'none'
+  forceBackground?: 'white' | 'transparent' | 'dark' | 'none';
+  viewMode?: LayerViewMode;
 }
 
 interface LoupeState {
@@ -21,7 +24,7 @@ interface LoupeState {
   hex: string;
 }
 
-const LayerPreview: React.FC<LayerPreviewProps> = memo(({ imageData, width, height, label, tint, onPixelSelect, className, fitContain, forceBackground }) => {
+const LayerPreview: React.FC<LayerPreviewProps> = memo(({ imageData, width, height, label, tint, onPixelSelect, className, fitContain, forceBackground, viewMode = 'color' }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const loupeCanvasRef = useRef<HTMLCanvasElement>(null);
   const [loupe, setLoupe] = useState<LoupeState>({ visible: false, x: 0, y: 0, pixelX: 0, pixelY: 0, hex: '' });
@@ -37,9 +40,36 @@ const LayerPreview: React.FC<LayerPreviewProps> = memo(({ imageData, width, heig
     // Clear canvas first if transparency is needed
     ctx.clearRect(0, 0, width, height);
 
-    if (!tint) {
-        ctx.putImageData(imageData, 0, 0);
-    } else {
+    if (viewMode === 'mask') {
+        // Alpha Mask: White = 100% Alpha, Black = 0% Alpha. Opaque image.
+        const tempImg = ctx.createImageData(width, height);
+        const d = tempImg.data;
+        const src = imageData.data;
+        for(let i=0; i<src.length; i+=4) {
+            const a = src[i+3];
+            d[i] = a;     // R
+            d[i+1] = a;   // G
+            d[i+2] = a;   // B
+            d[i+3] = 255; // Alpha
+        }
+        ctx.putImageData(tempImg, 0, 0);
+    } else if (viewMode === 'positive') {
+        // Film Positive: Black Ink on White Paper.
+        // 100% Source Alpha = Black (0). 0% Source Alpha = White (255).
+        const tempImg = ctx.createImageData(width, height);
+        const d = tempImg.data;
+        const src = imageData.data;
+        for(let i=0; i<src.length; i+=4) {
+            const a = src[i+3];
+            const val = 255 - a;
+            d[i] = val;   // R
+            d[i+1] = val; // G
+            d[i+2] = val; // B
+            d[i+3] = 255; // Alpha
+        }
+        ctx.putImageData(tempImg, 0, 0);
+    } else if (tint) {
+        // Color Mode with Tint
         const tempImg = ctx.createImageData(width, height);
         const d = tempImg.data;
         const src = imageData.data;
@@ -56,8 +86,11 @@ const LayerPreview: React.FC<LayerPreviewProps> = memo(({ imageData, width, heig
             d[i+3] = alpha; 
         }
         ctx.putImageData(tempImg, 0, 0);
+    } else {
+        // Standard (Color Mode without tint, e.g. Original)
+        ctx.putImageData(imageData, 0, 0);
     }
-  }, [imageData, width, height, tint]);
+  }, [imageData, width, height, tint, viewMode]);
 
   // Loupe Drawing Logic
   useEffect(() => {
@@ -162,7 +195,10 @@ const LayerPreview: React.FC<LayerPreviewProps> = memo(({ imageData, width, heig
   // Determine background style
   let bgStyle = "bg-[url('https://www.transparenttextures.com/patterns/checkerboard.png')] bg-white"; // Default Transparent/Checker
 
-  if (forceBackground === 'white') {
+  if (viewMode === 'mask' || viewMode === 'positive') {
+      // Opaque modes don't need background patterns
+      bgStyle = "bg-gray-100";
+  } else if (forceBackground === 'white') {
       bgStyle = "bg-white";
   } else if (forceBackground === 'dark') {
       bgStyle = "bg-gray-800";

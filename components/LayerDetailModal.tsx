@@ -1,7 +1,7 @@
-import React, { useEffect, useCallback } from 'react';
-import { X, ChevronLeft, ChevronRight, Scissors, Link, Edit2, Trash2 } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import { X, ChevronLeft, ChevronRight, Scissors, Link, Edit2, Trash2, Palette, ScanFace, FileText } from 'lucide-react';
 import { Layer } from '../types';
-import LayerPreview from './LayerPreview';
+import LayerPreview, { LayerViewMode } from './LayerPreview';
 import Button from './Button';
 
 interface LayerDetailModalProps {
@@ -23,6 +23,7 @@ const LayerDetailModal: React.FC<LayerDetailModalProps> = ({
   onAction,
   isHalftone
 }) => {
+  const [viewMode, setViewMode] = useState<LayerViewMode>('color');
   
   // Handle Keyboard Navigation
   useEffect(() => {
@@ -68,8 +69,8 @@ const LayerDetailModal: React.FC<LayerDetailModalProps> = ({
         {/* Main Content */}
         <div className="flex flex-col items-center gap-6 max-w-5xl w-full" onClick={(e) => e.stopPropagation()}>
             
-            {/* Header Info */}
-            <div className="flex flex-col items-center gap-2">
+            {/* Header Info & Controls */}
+            <div className="flex flex-col items-center gap-4">
                  <div className="flex items-center gap-3 bg-gray-800 px-5 py-2 rounded-full border border-gray-600 shadow-xl">
                     <div className="w-6 h-6 rounded-full shadow-sm ring-2 ring-white/20" style={{backgroundColor: layer.color.hex}}></div>
                     <div className="flex flex-col text-center">
@@ -77,10 +78,34 @@ const LayerDetailModal: React.FC<LayerDetailModalProps> = ({
                         <span className="text-gray-400 text-[10px] uppercase font-bold">Layer {index + 1} of {totalLayers}</span>
                     </div>
                  </div>
+
+                 {/* View Mode Switcher */}
+                 <div className="flex bg-gray-800 rounded-lg p-1 border border-gray-700 shadow-lg">
+                    <button 
+                        onClick={() => setViewMode('color')}
+                        className={`flex items-center gap-2 px-4 py-2 rounded-md text-xs font-bold uppercase transition-all ${viewMode === 'color' ? 'bg-blue-600 text-white shadow' : 'text-gray-400 hover:bg-gray-700 hover:text-white'}`}
+                        title="Standard Color View"
+                    >
+                        <Palette className="w-4 h-4" /> Color
+                    </button>
+                    <button 
+                        onClick={() => setViewMode('mask')}
+                        className={`flex items-center gap-2 px-4 py-2 rounded-md text-xs font-bold uppercase transition-all ${viewMode === 'mask' ? 'bg-gray-200 text-gray-900 shadow' : 'text-gray-400 hover:bg-gray-700 hover:text-white'}`}
+                        title="Alpha Mask (White=Ink, Black=Clear)"
+                    >
+                        <ScanFace className="w-4 h-4" /> Mask
+                    </button>
+                    <button 
+                        onClick={() => setViewMode('positive')}
+                        className={`flex items-center gap-2 px-4 py-2 rounded-md text-xs font-bold uppercase transition-all ${viewMode === 'positive' ? 'bg-white text-black shadow' : 'text-gray-400 hover:bg-gray-700 hover:text-white'}`}
+                        title="Film Positive (Black Ink on White)"
+                    >
+                        <FileText className="w-4 h-4" /> Film
+                    </button>
+                 </div>
             </div>
 
             {/* Canvas Preview */}
-            {/* Removed bg-white/5 to allow full transparency showing the black modal background */}
             <div className="relative h-[60vh] w-full bg-transparent rounded shadow-2xl border border-gray-800 overflow-hidden flex items-center justify-center">
                 <LayerPreview 
                     imageData={layer.data} 
@@ -89,7 +114,8 @@ const LayerDetailModal: React.FC<LayerDetailModalProps> = ({
                     tint={!isHalftone ? layer.color.hex : undefined}
                     className="h-full w-full object-contain"
                     fitContain={true}
-                    forceBackground="none" // Forces transparent background so only the colored pixels show
+                    forceBackground="none" 
+                    viewMode={viewMode}
                 />
             </div>
 
