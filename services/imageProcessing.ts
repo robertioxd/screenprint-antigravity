@@ -4,16 +4,16 @@ let pyodide: any = null;
 let pythonInitialized = false;
 
 export const hexToRgb = (hex: string) => {
-  const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
-  return result ? {
-    r: parseInt(result[1], 16),
-    g: parseInt(result[2], 16),
-    b: parseInt(result[3], 16)
-  } : { r: 0, g: 0, b: 0 };
+    const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+    return result ? {
+        r: parseInt(result[1], 16),
+        g: parseInt(result[2], 16),
+        b: parseInt(result[3], 16)
+    } : { r: 0, g: 0, b: 0 };
 };
 
 export const rgbToHex = (r: number, g: number, b: number): string => {
-  return "#" + ((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1);
+    return "#" + ((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1);
 };
 
 const PYTHON_SCRIPT = `
@@ -72,7 +72,7 @@ def analyze_palette_py(image_data, width, height, k, sample_size):
     
     return hex_colors
 
-def separate_colors_py(image_data, width, height, palette_hex_list, kl, kc, kh, method, sep_type, cleanup_strength, smooth_edges, gamma_val, use_aa, aa_sigma, aa_threshold, use_adaptive, min_coverage, denoise_strength, denoise_spatial):
+def separate_colors_py(image_data, width, height, palette_hex_list, kl, kc, kh, method, sep_type, cleanup_strength, smooth_edges, gamma_val, use_aa, aa_sigma, aa_threshold, use_adaptive, min_coverage, denoise_strength, denoise_spatial, per_channel_min_list, per_channel_max_list, per_channel_gamma_list, use_substrate_knockout, substrate_hex, substrate_threshold):
     # 1. Load Data
     arr = np.array(image_data.to_py(), dtype=np.uint8).reshape(height, width, 4)
     rgb = arr[:, :, :3]
@@ -126,6 +126,17 @@ def separate_colors_py(image_data, width, height, palette_hex_list, kl, kc, kh, 
              max_dist = np.clip(avg_nearest * 0.7, 25.0, 70.0)
              dist_slope = max_dist * 0.5
 
+    # Per-channel gradient overrides
+    ch_min_arr = np.array(per_channel_min_list.to_py(), dtype=np.float32) if hasattr(per_channel_min_list, 'to_py') else np.array(per_channel_min_list, dtype=np.float32)
+    ch_max_arr = np.array(per_channel_max_list.to_py(), dtype=np.float32) if hasattr(per_channel_max_list, 'to_py') else np.array(per_channel_max_list, dtype=np.float32)
+    ch_gamma_arr = np.array(per_channel_gamma_list.to_py(), dtype=np.float32) if hasattr(per_channel_gamma_list, 'to_py') else np.array(per_channel_gamma_list, dtype=np.float32)
+
+    # Substrate knockout preparation
+    substrate_rgb = None
+    if use_substrate_knockout and substrate_hex:
+        sh = substrate_hex.lstrip('#')
+        substrate_rgb = np.array([int(sh[i:i+2], 16) for i in (0, 2, 4)], dtype=np.float32)
+
     num_pixels = pixels_flat.shape[0]
     num_colors = len(palette_rgb)
     layer_raw_values = np.zeros((num_colors, num_pixels), dtype=np.float32)
@@ -164,18 +175,34 @@ def separate_colors_py(image_data, width, height, palette_hex_list, kl, kc, kh, 
             for i in range(num_colors):
                 raw_d = chunk_dists[:, i]
                 min_d = min_dists[:, 0]
-                proximity = 1.0 - (raw_d / max_dist)
-                np.clip(proximity, 0, 1, out=proximity)
+
+                # Per-channel gradient range (SoftColor1-style linear ramp)
+                ch_min = ch_min_arr[i] if ch_min_arr[i] >= 0 else 0.0
+                ch_max = ch_max_arr[i] if ch_max_arr[i] > 0 else max_dist
+                ch_range = ch_max - ch_min
+                if ch_range < 1.0:
+                    ch_range = 1.0
+
+                proximity = np.clip(1.0 - (raw_d - ch_min) / ch_range, 0.0, 1.0)
+
                 dist_diff = raw_d - min_d
                 exclusivity = 1.0 - (dist_diff / dist_slope)
                 np.clip(exclusivity, 0, 1, out=exclusivity)
                 alpha = proximity * exclusivity
-                if gamma_val != 1.0:
-                    np.power(alpha, gamma_val, out=alpha)
+
+                # Per-channel gamma (fallback to global)
+                g_val = ch_gamma_arr[i] if ch_gamma_arr[i] > 0 else gamma_val
+                if g_val != 1.0:
+                    np.power(alpha, g_val, out=alpha)
                 
                 # CRITICAL: Apply Source Alpha Mask
-                # If the original pixel was transparent, the ink amount is multiplied by 0
                 alpha = alpha * chunk_alpha
+
+                # Substrate Knockout: subtract substrate mask from ink
+                if use_substrate_knockout and substrate_rgb is not None:
+                    sub_dist = np.linalg.norm(chunk_rgb.astype(np.float32) - substrate_rgb, axis=1)
+                    sub_mask = np.clip(1.0 - (sub_dist / float(substrate_threshold)), 0.0, 1.0)
+                    alpha = alpha * (1.0 - sub_mask)
 
                 # Hard clip for printing cleanliness
                 alpha[alpha < 0.05] = 0.0
@@ -326,7 +353,7 @@ export const initEngine = async () => {
     if (pyodide) return;
     // @ts-ignore
     pyodide = await window.loadPyodide({
-      indexURL: "https://cdn.jsdelivr.net/pyodide/v0.27.2/full/"
+        indexURL: "https://cdn.jsdelivr.net/pyodide/v0.27.2/full/"
     });
     // Ensure opencv-python is loaded
     await pyodide.loadPackage(["numpy", "Pillow", "scikit-image", "opencv-python"]);
@@ -337,8 +364,8 @@ export const initEngine = async () => {
 export const getPyodideInfo = () => {
     if (!pyodide) return null;
     return {
-      version: pyodide.version,
-      packages: Object.keys(pyodide.loadedPackages)
+        version: pyodide.version,
+        packages: Object.keys(pyodide.loadedPackages)
     };
 };
 
@@ -373,25 +400,33 @@ export const performSeparation = async (imageData: ImageData, palette: PaletteCo
     if (!pyodide) throw new Error("Pyodide not initialized");
     const { width, height, data } = imageData;
     const paletteHex = palette.map(p => p.hex);
-    
+
     const separateColorsPy = pyodide.globals.get('separate_colors_py');
+
+    // Build per-channel gradient arrays from palette
+    const perChannelMin = palette.map(p => p.gradientMin !== undefined ? p.gradientMin : -1);
+    const perChannelMax = palette.map(p => p.gradientMax !== undefined ? p.gradientMax : 0);
+    const perChannelGamma = palette.map(p => p.gamma !== undefined ? p.gamma : 0);
+
     const layersProxy = await separateColorsPy(
-        data, width, height, paletteHex, 
-        config.kL, config.kC, config.kH, 
-        config.separationMethod, config.separationType, 
-        config.cleanupStrength, config.smoothEdges, 
+        data, width, height, paletteHex,
+        config.kL, config.kC, config.kH,
+        config.separationMethod, config.separationType,
+        config.cleanupStrength, config.smoothEdges,
         config.gamma, config.useVectorAntiAliasing,
         config.vectorAASigma, config.vectorAAThreshold,
         config.useRasterAdaptive, config.minCoverage,
-        config.denoiseStrength, config.denoiseSpatial
+        config.denoiseStrength, config.denoiseSpatial,
+        perChannelMin, perChannelMax, perChannelGamma,
+        config.useSubstrateKnockout, config.substrateColorHex, config.substrateThreshold
     );
-    
+
     const layersDataMapList = layersProxy.toJs();
     layersProxy.destroy();
     separateColorsPy.destroy();
-    
+
     const resultLayers: Layer[] = [];
-    
+
     for (const item of layersDataMapList) {
         let index, layerDataRaw;
         if (item instanceof Map) {
@@ -401,7 +436,7 @@ export const performSeparation = async (imageData: ImageData, palette: PaletteCo
             index = item.index;
             layerDataRaw = item.data;
         }
-        
+
         const color = palette[index];
         const layerData = new Uint8ClampedArray(layerDataRaw);
         resultLayers.push({
@@ -416,35 +451,35 @@ export const performSeparation = async (imageData: ImageData, palette: PaletteCo
 };
 
 export const applyHalftone = async (imageData: ImageData, config: AdvancedConfig): Promise<ImageData> => {
-     if (!pyodide) throw new Error("Pyodide not initialized");
-     const { width, height, data } = imageData;
-     let resultProxy;
-     
-     if (config.halftoneType === 'am') {
-         const applyHalftoneAmPy = pyodide.globals.get('apply_halftone_am_py');
-         resultProxy = await applyHalftoneAmPy(data, width, height, config.halftoneLpi, config.halftoneAngle, config.outputDpi);
-         applyHalftoneAmPy.destroy();
-     } else {
-         const applyHalftoneFmPy = pyodide.globals.get('apply_halftone_fm_py');
-         resultProxy = await applyHalftoneFmPy(data, width, height);
-         applyHalftoneFmPy.destroy();
-     }
-     
-     const resultArray = resultProxy.toJs();
-     resultProxy.destroy();
-     return new ImageData(new Uint8ClampedArray(resultArray), width, height);
+    if (!pyodide) throw new Error("Pyodide not initialized");
+    const { width, height, data } = imageData;
+    let resultProxy;
+
+    if (config.halftoneType === 'am') {
+        const applyHalftoneAmPy = pyodide.globals.get('apply_halftone_am_py');
+        resultProxy = await applyHalftoneAmPy(data, width, height, config.halftoneLpi, config.halftoneAngle, config.outputDpi);
+        applyHalftoneAmPy.destroy();
+    } else {
+        const applyHalftoneFmPy = pyodide.globals.get('apply_halftone_fm_py');
+        resultProxy = await applyHalftoneFmPy(data, width, height);
+        applyHalftoneFmPy.destroy();
+    }
+
+    const resultArray = resultProxy.toJs();
+    resultProxy.destroy();
+    return new ImageData(new Uint8ClampedArray(resultArray), width, height);
 };
 
 export const generateComposite = async (layers: Layer[], width: number, height: number, config: AdvancedConfig): Promise<ImageData> => {
     if (!pyodide) throw new Error("Pyodide not initialized");
     if (layers.length === 0) return new ImageData(width, height);
-    
+
     const visibleLayers = layers.filter(l => l.visible);
     if (visibleLayers.length === 0) return new ImageData(width, height);
 
     const layerDataList = visibleLayers.map(l => l.data.data);
     const colorsHex = visibleLayers.map(l => l.color.hex);
-    
+
     const generateCompositePy = pyodide.globals.get('generate_composite_py');
     const compProxy = await generateCompositePy(layerDataList, colorsHex, width, height, config.inkOpacity * 255);
     const compArray = compProxy.toJs();
@@ -459,13 +494,13 @@ export const mergeLayersData = (base: ImageData, others: ImageData[]): ImageData
     const len = width * height * 4;
     const result = new Uint8ClampedArray(len);
     result.set(base.data);
-    
+
     for (const other of others) {
         for (let i = 0; i < len; i += 4) {
             const currentA = result[i + 3];
             const otherA = other.data[i + 3];
             result[i + 3] = Math.min(255, currentA + otherA);
-            result[i] = 0; result[i+1] = 0; result[i+2] = 0;
+            result[i] = 0; result[i + 1] = 0; result[i + 2] = 0;
         }
     }
     return new ImageData(result, width, height);
@@ -475,26 +510,26 @@ export const createGrayscaleFromAlpha = (layer: Layer): ImageData => {
     const { width, height, data } = layer.data;
     const newBuffer = new Uint8ClampedArray(width * height * 4);
     for (let i = 0; i < data.length; i += 4) {
-        const a = data[i+3];
+        const a = data[i + 3];
         newBuffer[i] = a;
-        newBuffer[i+1] = a;
-        newBuffer[i+2] = a;
-        newBuffer[i+3] = 255;
+        newBuffer[i + 1] = a;
+        newBuffer[i + 2] = a;
+        newBuffer[i + 3] = 255;
     }
     return new ImageData(newBuffer, width, height);
 };
 
-export const splitByLasso = (imageData: ImageData, points: {x: number, y: number}[]): [ImageData, ImageData] => {
+export const splitByLasso = (imageData: ImageData, points: { x: number, y: number }[]): [ImageData, ImageData] => {
     const { width, height } = imageData;
     const inside = new Uint8ClampedArray(imageData.data);
     const outside = new Uint8ClampedArray(imageData.data);
-    
+
     const canvas = document.createElement('canvas');
     canvas.width = width;
     canvas.height = height;
     const ctx = canvas.getContext('2d');
     if (!ctx) throw new Error("No canvas context");
-    
+
     ctx.beginPath();
     if (points.length > 0) {
         ctx.moveTo(points[0].x, points[0].y);
@@ -505,15 +540,15 @@ export const splitByLasso = (imageData: ImageData, points: {x: number, y: number
     }
     ctx.fillStyle = '#FFFFFF';
     ctx.fill();
-    
+
     const maskData = ctx.getImageData(0, 0, width, height).data;
-    
+
     for (let i = 0; i < maskData.length; i += 4) {
-        const isInside = maskData[i] > 128; 
+        const isInside = maskData[i] > 128;
         if (isInside) {
-            outside[i+3] = 0; 
+            outside[i + 3] = 0;
         } else {
-            inside[i+3] = 0;
+            inside[i + 3] = 0;
         }
     }
     return [new ImageData(inside, width, height), new ImageData(outside, width, height)];

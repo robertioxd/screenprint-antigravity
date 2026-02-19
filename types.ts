@@ -9,6 +9,10 @@ export interface PaletteColor {
   hex: string;
   rgb: RGB;
   locked?: boolean;
+  // Per-channel gradient range (Raster mode only)
+  gradientMin?: number;  // 0-100: Distance where ink is 100% solid
+  gradientMax?: number;  // 0-200: Distance where ink fades to 0%
+  gamma?: number;        // 0.1-3.0: Per-channel gamma curve
 }
 
 export interface Layer {
@@ -44,6 +48,11 @@ export interface AdvancedConfig {
   // Raster Specific
   useRasterAdaptive: boolean;
 
+  // Substrate Knockout
+  useSubstrateKnockout: boolean;
+  substrateColorHex: string;  // Color of the garment/paper
+  substrateThreshold: number; // 0-100: How aggressively to knock out
+
   // Cleanup Parameters
   cleanupStrength: number; // 0-10: Relative area-based removal
   smoothEdges: number;     // 0-5: Gaussian blur edge refinement
@@ -78,6 +87,10 @@ export const DEFAULT_CONFIG: AdvancedConfig = {
   vectorAAThreshold: 127,
 
   useRasterAdaptive: true,
+
+  useSubstrateKnockout: false,
+  substrateColorHex: '#ffffff',
+  substrateThreshold: 50,
 
   cleanupStrength: 1, 
   smoothEdges: 0,
