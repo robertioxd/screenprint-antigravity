@@ -1,12 +1,14 @@
 import React from 'react';
-import { Layers, Image as ImageIcon, Sparkles, Feather, Grid3X3, Ruler, Info, BookOpen, Wand2, Calculator, Droplets, ScanFace } from 'lucide-react';
+import { Layers, Image as ImageIcon, Sparkles, Feather, Grid3X3, Ruler, Info, BookOpen, Wand2, Calculator, Droplets, ScanFace, FileText, Download } from 'lucide-react';
+import Button from './Button';
+import { generateTechnicalDocumentation } from '../services/docGenerator';
 
 const GuideSection: React.FC = () => {
   return (
     <div className="w-full max-w-5xl mx-auto p-6 space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
       
       {/* Header */}
-      <div className="text-center space-y-2 mb-8">
+      <div className="text-center space-y-4 mb-8">
         <h2 className="text-3xl font-bold text-white tracking-tight flex items-center justify-center gap-3">
           <BookOpen className="w-8 h-8 text-blue-500" />
           Guía de Usuario y Documentación
@@ -14,6 +16,16 @@ const GuideSection: React.FC = () => {
         <p className="text-gray-400 max-w-2xl mx-auto">
           Aprende a configurar ScreenPrint Pro para obtener separaciones de color de calidad profesional optimizadas para serigrafía.
         </p>
+        
+        <div className="flex justify-center mt-4">
+             <Button 
+                onClick={generateTechnicalDocumentation} 
+                className="bg-gray-800 border border-gray-600 hover:bg-gray-700 text-gray-200 shadow-lg"
+             >
+                <FileText className="w-4 h-4 mr-2 text-blue-400" />
+                Descargar Documentación Técnica (PDF)
+             </Button>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -45,7 +57,7 @@ const GuideSection: React.FC = () => {
                      <div className="space-y-1">
                         <div className="flex justify-between items-center">
                             <span className="text-xs font-bold text-gray-300 uppercase">Intensidad Color (SigmaColor)</span>
-                            <span className="text-[10px] bg-gray-700 px-1.5 rounded text-gray-400">Default: 10</span>
+                            <span className="text-[10px] bg-gray-700 px-1.5 rounded text-gray-400">Default: 5</span>
                         </div>
                         <p className="text-[11px] text-gray-500 leading-tight">
                             Controla cuánto se mezclan colores similares. Valores altos crean un efecto "Cartoon" o posterizado, ideal para reducir la cantidad de colores en una fotografía.

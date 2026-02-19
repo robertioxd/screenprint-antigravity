@@ -14,7 +14,9 @@
     "lucide-react": "^0.563.0",
     "file-saver": "^2.0.5",
     "jszip": "^3.10.1",
-    "ag-psd": "^15.0.0"
+    "ag-psd": "^15.0.0",
+    "jspdf": "2.5.1",
+    "jspdf-autotable": "3.8.2"
   },
   "devDependencies": {
     "@types/node": "^22.14.0",
