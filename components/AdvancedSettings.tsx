@@ -39,10 +39,10 @@ const AdvancedSettings: React.FC<AdvancedSettingsProps> = ({ config, onChange, i
               onClick={onAIAnalyze}
               disabled={aiLoading || !hasImage}
               className={`w-full flex items-center justify-center gap-2 py-2.5 rounded-lg text-[12px] font-bold uppercase tracking-wider transition-all duration-300 ${aiLoading
-                  ? 'bg-gray-700 text-gray-400 cursor-wait'
-                  : !hasImage
-                    ? 'bg-gray-700 text-gray-500 cursor-not-allowed'
-                    : 'bg-gradient-to-r from-purple-600 via-blue-600 to-cyan-500 hover:from-purple-500 hover:via-blue-500 hover:to-cyan-400 text-white shadow-lg shadow-purple-900/30 hover:shadow-purple-800/50'
+                ? 'bg-gray-700 text-gray-400 cursor-wait'
+                : !hasImage
+                  ? 'bg-gray-700 text-gray-500 cursor-not-allowed'
+                  : 'bg-gradient-to-r from-purple-600 via-blue-600 to-cyan-500 hover:from-purple-500 hover:via-blue-500 hover:to-cyan-400 text-white shadow-lg shadow-purple-900/30 hover:shadow-purple-800/50'
                 }`}
             >
               <Zap className={`w-4 h-4 ${aiLoading ? 'animate-pulse' : ''}`} />
@@ -228,7 +228,7 @@ const AdvancedSettings: React.FC<AdvancedSettingsProps> = ({ config, onChange, i
               </div>
             )}
 
-            <div className="grid grid-cols-2 gap-2 mb-3">
+            <div className="grid grid-cols-3 gap-2 mb-3">
               <button
                 onClick={() => updateField('separationMethod', 'ciede2000')}
                 className={`p-2 rounded border flex flex-col items-center gap-1 transition-all ${config.separationMethod === 'ciede2000' ? 'bg-blue-600 border-blue-500 text-white' : 'bg-gray-800 border-gray-700 text-gray-400 hover:bg-gray-700'}`}
@@ -237,11 +237,19 @@ const AdvancedSettings: React.FC<AdvancedSettingsProps> = ({ config, onChange, i
                 <span className="text-[10px] font-bold">CIEDE2000</span>
               </button>
               <button
+                onClick={() => updateField('separationMethod', 'lab_euclidean')}
+                className={`p-2 rounded border flex flex-col items-center gap-1 transition-all ${config.separationMethod === 'lab_euclidean' ? 'bg-green-600 border-green-500 text-white' : 'bg-gray-800 border-gray-700 text-gray-400 hover:bg-gray-700'}`}
+                title="Euclidiano en espacio LAB. Más rápido que CIEDE2000. Recomendado para vectores."
+              >
+                <Droplets className="w-4 h-4" />
+                <span className="text-[10px] font-bold">LAB Euclid.</span>
+              </button>
+              <button
                 onClick={() => updateField('separationMethod', 'euclidean')}
                 className={`p-2 rounded border flex flex-col items-center gap-1 transition-all ${config.separationMethod === 'euclidean' ? 'bg-blue-600 border-blue-500 text-white' : 'bg-gray-800 border-gray-700 text-gray-400 hover:bg-gray-700'}`}
               >
                 <Calculator className="w-4 h-4" />
-                <span className="text-[10px] font-bold">Euclidiano</span>
+                <span className="text-[10px] font-bold">RGB Euclid.</span>
               </button>
             </div>
 

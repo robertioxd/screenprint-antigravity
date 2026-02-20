@@ -28,9 +28,9 @@ export interface AdvancedConfig {
   kL: number;
   kC: number;
   kH: number;
-  separationMethod: 'ciede2000' | 'euclidean';
+  separationMethod: 'ciede2000' | 'euclidean' | 'lab_euclidean';
   separationType: 'vector' | 'raster';
-  
+
   // Output Size & Resolution
   outputDpi: number;
   outputSizeInches: number;
@@ -63,20 +63,20 @@ export interface AdvancedConfig {
   halftoneLpi: number;
   halftoneAngle: number;
   // Gamma adjustment for soft separation
-  gamma: number; 
+  gamma: number;
 }
 
 export const DEFAULT_CONFIG: AdvancedConfig = {
   sampleSize: 25000,
-  inkOpacity: 0.90, 
+  inkOpacity: 0.90,
   kL: 1.0,
   kC: 1.0,
   kH: 1.0,
   separationMethod: 'ciede2000',
   separationType: 'vector',
-  
+
   outputDpi: 300,
-  outputSizeInches: 3, 
+  outputSizeInches: 3,
   outputMeasurement: 'width',
 
   denoiseStrength: 10, // New default for Bilateral
@@ -92,14 +92,14 @@ export const DEFAULT_CONFIG: AdvancedConfig = {
   substrateColorHex: '#ffffff',
   substrateThreshold: 50,
 
-  cleanupStrength: 1, 
+  cleanupStrength: 1,
   smoothEdges: 0,
   minCoverage: 0.2,
 
   halftoneType: 'am',
-  halftoneLpi: 45, 
+  halftoneLpi: 45,
   halftoneAngle: 22.5,
-  gamma: 1.25 
+  gamma: 1.25
 };
 
 export enum ProcessingStatus {

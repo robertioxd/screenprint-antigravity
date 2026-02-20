@@ -108,6 +108,9 @@ def separate_colors_py(image_data, width, height, palette_hex_list, kl, kc, kh, 
     
     if method == 'ciede2000':
         palette_lab = color.rgb2lab(palette_arr_uint8.reshape(1, -1, 3)).reshape(-1, 3).astype(np.float32)
+    elif method == 'lab_euclidean':
+        # LAB-Euclidean: faster than CIEDE2000, more perceptually accurate than RGB Euclidean
+        palette_lab_cv = cv2.cvtColor(palette_arr_uint8.reshape(1, -1, 3), cv2.COLOR_RGB2Lab).reshape(-1, 3).astype(np.float32)
     else:
         palette_float = palette_arr_uint8.astype(np.float32)
 
@@ -156,6 +159,12 @@ def separate_colors_py(image_data, width, height, palette_hex_list, kl, kc, kh, 
                 # This is the bottleneck, but necessary for accuracy
                 d = color.deltaE_ciede2000(ref, chunk_lab, kL=kl, kC=kc, kH=kh)
                 chunk_dists[:, i] = d.reshape(-1)
+        elif method == 'lab_euclidean':
+            # LAB-Euclidean: convert chunk to LAB via OpenCV, then Euclidean distance
+            chunk_lab_cv = cv2.cvtColor(chunk_rgb.reshape(-1, 1, 3), cv2.COLOR_RGB2Lab).reshape(-1, 3).astype(np.float32)
+            for i in range(num_colors):
+                diff = chunk_lab_cv - palette_lab_cv[i]
+                chunk_dists[:, i] = np.linalg.norm(diff, axis=1)
         else:
             chunk_float = chunk_rgb.astype(np.float32)
             diff = chunk_float[:, np.newaxis, :] - palette_float[np.newaxis, :, :]
@@ -204,8 +213,11 @@ def separate_colors_py(image_data, width, height, palette_hex_list, kl, kc, kh, 
                     sub_mask = np.clip(1.0 - (sub_dist / float(substrate_threshold)), 0.0, 1.0)
                     alpha = alpha * (1.0 - sub_mask)
 
-                # Hard clip for printing cleanliness
-                alpha[alpha < 0.05] = 0.0
+                # Smooth alpha ramp: eliminates aliased dotted edges
+                # Values below 0.02 are killed, values 0.02-0.08 get a smooth fade
+                alpha = np.where(alpha < 0.02, 0.0, alpha)
+                smooth_zone = (alpha >= 0.02) & (alpha < 0.08)
+                alpha[smooth_zone] = alpha[smooth_zone] * (alpha[smooth_zone] / 0.08)
                 layer_raw_values[i, start:end] = alpha * 255.0
 
     gc.collect()
@@ -225,25 +237,31 @@ def separate_colors_py(image_data, width, height, palette_hex_list, kl, kc, kh, 
                  continue
 
         if np.any(alpha_channel):
-            # Cleanup (Morphology)
-            if cleanup_strength > 0:
-                # Use OpenCV morphology for speed
-                scale_factor = max(1.0, (width * height) / 2000000.0)
-                # Remove small noise (Opening)
-                kernel_size = int((cleanup_strength ** 0.5) * scale_factor) + 1
-                if kernel_size > 1:
-                    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (kernel_size, kernel_size))
-                    # Open = Erosion followed by Dilation (removes noise)
-                    alpha_channel = cv2.morphologyEx(alpha_channel, cv2.MORPH_OPEN, kernel)
-                    # Close = Dilation followed by Erosion (fills holes)
-                    alpha_channel = cv2.morphologyEx(alpha_channel, cv2.MORPH_CLOSE, kernel)
-
-            # Vector Anti-Aliasing (Optimized)
+            # FIX 2: Vector Anti-Aliasing BEFORE cleanup (smooths classification noise first)
             if sep_type == 'vector' and use_aa:
-                # Gaussian Blur using OpenCV
                 blurred = cv2.GaussianBlur(alpha_channel, (0, 0), sigmaX=float(aa_sigma))
-                # Threshold
                 _, alpha_channel = cv2.threshold(blurred, int(aa_threshold), 255, cv2.THRESH_BINARY)
+
+            # FIX 1: Size-aware cleanup with connected component area filtering
+            # Preserves small details like ® symbols while removing noise
+            if cleanup_strength > 0:
+                scale_factor = max(1.0, (width * height) / 2000000.0)
+                # Pass 1: Small fixed kernel for micro-noise (capped at 7x7 max)
+                morph_k = min(3 + (int(cleanup_strength) // 4) * 2, 7)
+                if morph_k % 2 == 0:
+                    morph_k += 1  # Must be odd
+                kernel_small = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (morph_k, morph_k))
+                alpha_channel = cv2.morphologyEx(alpha_channel, cv2.MORPH_OPEN, kernel_small)
+                alpha_channel = cv2.morphologyEx(alpha_channel, cv2.MORPH_CLOSE, kernel_small)
+
+                # Pass 2: Connected component area filter
+                # Removes isolated noise blobs but keeps coherent shapes (® symbols, thin strokes)
+                if cleanup_strength >= 2:
+                    min_area = int(cleanup_strength * cleanup_strength * scale_factor * 2)
+                    num_labels, labels_cc, stats, _ = cv2.connectedComponentsWithStats(alpha_channel, connectivity=8)
+                    for j in range(1, num_labels):
+                        if stats[j, cv2.CC_STAT_AREA] < min_area:
+                            alpha_channel[labels_cc == j] = 0
 
             # General Smoothing (Soft Edges)
             if smooth_edges > 0:

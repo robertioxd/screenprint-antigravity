@@ -15,6 +15,7 @@ import { Layer, PaletteColor, ProcessingStatus, AdvancedConfig, DEFAULT_CONFIG }
 import { analyzePalette, performSeparation, applyHalftone, initEngine, generateComposite, getPyodideInfo, hexToRgb, mergeLayersData, createGrayscaleFromAlpha, resizeImage } from './services/imageProcessing';
 import { downloadComposite, downloadChannelsZip } from './services/exportService';
 import { analyzeWithAI, AIAnalysisResult, supabase, saveTrainingData } from './services/supabase';
+import { exportLayersAsEPS } from './services/zipExport';
 import { User } from '@supabase/supabase-js';
 import { AuthModal } from './components/Auth/AuthModal';
 import { UserMenu } from './components/Auth/UserMenu';
@@ -689,6 +690,16 @@ const App: React.FC = () => {
                                                 className="w-4 h-4 p-0 border-0 rounded-full cursor-pointer overflow-hidden"
                                             />
                                         </div>
+                                        {/* EXPORT EPS BUTTON */}
+                                        <button
+                                            onClick={() => exportLayersAsEPS(layers, advancedConfig, 'screenprint')}
+                                            disabled={layers.length === 0}
+                                            className="flex items-center gap-2 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 disabled:from-gray-700 disabled:to-gray-700 disabled:text-gray-500 text-white text-[10px] font-bold uppercase tracking-wider px-3 py-1.5 rounded-full border border-emerald-500/30 disabled:border-gray-600 transition-all duration-300 shadow-lg shadow-emerald-500/20 disabled:shadow-none"
+                                            title="Export all layers as EPS files in a ZIP archive (for I-Image CTS)"
+                                        >
+                                            <Printer className="w-3.5 h-3.5" />
+                                            Export EPS
+                                        </button>
                                     </div>
                                     {/* Changed bg-gray-900 to dynamic shirtColor style */}
                                     {compositeImage && <div className="relative flex items-center justify-center rounded-lg overflow-hidden border border-gray-700 min-h-[400px] shadow-inner transition-colors duration-300" style={{ backgroundColor: shirtColor }}><LayerPreview imageData={compositeImage} width={compositeImage.width} height={compositeImage.height} forceBackground="none" /></div>}
