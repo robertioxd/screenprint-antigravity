@@ -76,6 +76,55 @@ export interface AIAnalysisResult {
  * Sends the current image to the Supabase Edge Function for AI analysis.
  * The Edge Function handles Gemini API calls and RAG lookups internally.
  */
+// ==========================================
+// AI TRAINING API
+// ==========================================
+
+export interface TrainingData {
+    final_config: Record<string, unknown>;
+    separation_type: 'vector' | 'raster';
+    image_metadata: {
+        width: number;
+        height: number;
+        num_colors: number;
+        palette_hex: string[];
+        timestamp: string;
+    };
+}
+
+/**
+ * Saves a successful separation result to ai_memory for RAG-based learning.
+ * The Edge Function will query verified records to provide context for future analyses.
+ */
+export async function saveTrainingData(data: TrainingData): Promise<boolean> {
+    if (!supabase) {
+        console.error('[Supabase] Client not initialized');
+        return false;
+    }
+
+    try {
+        const { error } = await supabase
+            .from('ai_memory')
+            .insert({
+                final_config: data.final_config,
+                separation_type: data.separation_type,
+                image_metadata: data.image_metadata,
+                is_verified: true,
+            });
+
+        if (error) {
+            console.error('[AI Training] Save error:', error.message);
+            return false;
+        }
+
+        console.log('[AI Training] Successfully saved training data');
+        return true;
+    } catch (err) {
+        console.error('[AI Training] Unexpected error:', err);
+        return false;
+    }
+}
+
 export async function analyzeWithAI(
     imageBase64: string,
     userPrompt?: string

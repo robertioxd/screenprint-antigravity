@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Layers, Printer, Wand2, Settings, Download, ScanEye, Package, ChevronDown, FileImage, FileArchive, Pipette, Maximize2, X, BookOpen, Undo, Redo, Eye, EyeOff, GripVertical, Palette, ScanFace, FileText } from 'lucide-react';
+import { Layers, Printer, Wand2, Settings, Download, ScanEye, Package, ChevronDown, FileImage, FileArchive, Pipette, Maximize2, X, BookOpen, Undo, Redo, Eye, EyeOff, GripVertical, Palette, ScanFace, FileText, Brain, MessageSquare, CheckCircle, XCircle } from 'lucide-react';
 import UploadZone from './components/UploadZone';
 import PaletteManager from './components/PaletteManager';
 import LayerPreview, { LayerViewMode } from './components/LayerPreview';
@@ -14,7 +14,7 @@ import { ChopModal, MergeModal, EditColorModal } from './components/LayerActionM
 import { Layer, PaletteColor, ProcessingStatus, AdvancedConfig, DEFAULT_CONFIG } from './types';
 import { analyzePalette, performSeparation, applyHalftone, initEngine, generateComposite, getPyodideInfo, hexToRgb, mergeLayersData, createGrayscaleFromAlpha, resizeImage } from './services/imageProcessing';
 import { downloadComposite, downloadChannelsZip } from './services/exportService';
-import { analyzeWithAI, AIAnalysisResult, supabase } from './services/supabase';
+import { analyzeWithAI, AIAnalysisResult, supabase, saveTrainingData } from './services/supabase';
 import { User } from '@supabase/supabase-js';
 import { AuthModal } from './components/Auth/AuthModal';
 import { UserMenu } from './components/Auth/UserMenu';
@@ -44,6 +44,12 @@ const App: React.FC = () => {
     const [showAdvancedSettings, setShowAdvancedSettings] = useState(true);
     const [aiLoading, setAiLoading] = useState(false);
     const [isPickerActive, setIsPickerActive] = useState(false);
+
+    // AI Prompt Modal State
+    const [showAIPromptModal, setShowAIPromptModal] = useState(false);
+    const [aiUserPrompt, setAiUserPrompt] = useState('');
+    const [aiReasoning, setAiReasoning] = useState<string | null>(null);
+    const [trainingStatus, setTrainingStatus] = useState<'idle' | 'saving' | 'success' | 'error'>('idle');
 
     // Auth State
     const [user, setUser] = useState<User | null>(null);
@@ -460,6 +466,19 @@ const App: React.FC = () => {
                     </div>
                 </div>
 
+                {/* User Guide Download */}
+                <div className="flex items-center border-l border-gray-700 pl-4 ml-4 h-8">
+                    <a
+                        href="/USER_GUIDE.pdf"
+                        download="ScreenPrintPro_UserGuide.pdf"
+                        className="flex items-center gap-2 text-xs font-bold text-gray-400 hover:text-white transition-colors uppercase tracking-wider group"
+                        title="Download User Guide PDF"
+                    >
+                        <BookOpen className="w-4 h-4 text-blue-400 group-hover:text-blue-300" />
+                        <span className="hidden sm:inline">Guide</span>
+                    </a>
+                </div>
+
                 {/* User Auth Section */}
                 <div className="flex items-center gap-4 border-l border-gray-700 pl-4 ml-4">
                     {!sessionLoading && (
@@ -506,39 +525,10 @@ const App: React.FC = () => {
                             onChange={setAdvancedConfig}
                             isOpen={showAdvancedSettings}
                             onToggle={() => setShowAdvancedSettings(!showAdvancedSettings)}
-                            onAIAnalyze={async () => {
+                            onAIAnalyze={() => {
                                 if (!originalImage) return;
-                                setAiLoading(true);
-                                try {
-                                    const canvas = document.createElement('canvas');
-                                    canvas.width = originalImage.width;
-                                    canvas.height = originalImage.height;
-                                    const ctx = canvas.getContext('2d')!;
-                                    ctx.putImageData(originalImage, 0, 0);
-                                    const base64 = canvas.toDataURL('image/png');
-                                    const result = await analyzeWithAI(base64);
-                                    if (result) {
-                                        setAdvancedConfig(prev => ({
-                                            ...prev,
-                                            separationType: result.separationType,
-                                            denoiseStrength: result.denoiseStrength,
-                                            denoiseSpatial: result.denoiseSpatial,
-                                            cleanupStrength: result.cleanupStrength,
-                                            minCoverage: result.minCoverage,
-                                            useRasterAdaptive: result.useRasterAdaptive,
-                                            useSubstrateKnockout: result.useSubstrateKnockout,
-                                            substrateColorHex: result.substrateColorHex,
-                                            substrateThreshold: result.substrateThreshold,
-                                            gamma: result.gamma,
-                                            halftoneLpi: result.halftoneLpi,
-                                        }));
-                                        console.log('[AI] Reasoning:', result.reasoning);
-                                    }
-                                } catch (err) {
-                                    console.error('[AI Analysis] Error:', err);
-                                } finally {
-                                    setAiLoading(false);
-                                }
+                                setAiUserPrompt('');
+                                setShowAIPromptModal(true);
                             }}
                             aiLoading={aiLoading}
                             hasImage={!!originalImage}
@@ -557,6 +547,53 @@ const App: React.FC = () => {
                             <Button className="w-full text-sm py-2.5" variant="secondary" onClick={runHalftone} disabled={layers.length === 0 || !engineReady} isLoading={status === ProcessingStatus.HALFTONING}>
                                 Apply Bitmaps
                             </Button>
+
+                            {/* TRAIN IA BUTTON */}
+                            {layers.length > 0 && originalImage && (
+                                <button
+                                    onClick={async () => {
+                                        if (!originalImage || layers.length === 0) return;
+                                        setTrainingStatus('saving');
+                                        try {
+                                            const success = await saveTrainingData({
+                                                final_config: advancedConfig as unknown as Record<string, unknown>,
+                                                separation_type: advancedConfig.separationType as 'vector' | 'raster',
+                                                image_metadata: {
+                                                    width: originalImage.width,
+                                                    height: originalImage.height,
+                                                    num_colors: palette.length,
+                                                    palette_hex: palette.map(p => p.hex),
+                                                    timestamp: new Date().toISOString(),
+                                                },
+                                            });
+                                            setTrainingStatus(success ? 'success' : 'error');
+                                            setTimeout(() => setTrainingStatus('idle'), 3000);
+                                        } catch {
+                                            setTrainingStatus('error');
+                                            setTimeout(() => setTrainingStatus('idle'), 3000);
+                                        }
+                                    }}
+                                    disabled={trainingStatus === 'saving'}
+                                    className={`w-full flex items-center justify-center gap-2 py-2.5 rounded-lg text-[12px] font-bold uppercase tracking-wider transition-all duration-300 border ${trainingStatus === 'success'
+                                        ? 'bg-green-600/20 border-green-500 text-green-400'
+                                        : trainingStatus === 'error'
+                                            ? 'bg-red-600/20 border-red-500 text-red-400'
+                                            : trainingStatus === 'saving'
+                                                ? 'bg-gray-700 border-gray-600 text-gray-400 cursor-wait'
+                                                : 'bg-gray-800 border-gray-600 text-gray-300 hover:bg-gray-700 hover:border-purple-500 hover:text-purple-300'
+                                        }`}
+                                >
+                                    {trainingStatus === 'success' ? (
+                                        <><CheckCircle className="w-4 h-4" /> Entrenamiento Guardado ✓</>
+                                    ) : trainingStatus === 'error' ? (
+                                        <><XCircle className="w-4 h-4" /> Error al guardar</>
+                                    ) : trainingStatus === 'saving' ? (
+                                        <><Brain className="w-4 h-4 animate-pulse" /> Guardando...</>
+                                    ) : (
+                                        <><Brain className="w-4 h-4" /> 🧠 Train IA</>
+                                    )}
+                                </button>
+                            )}
                         </div>
                     </div>
 
@@ -782,6 +819,115 @@ const App: React.FC = () => {
                                 onSave={handleEditColorSave}
                             />
                         )}
+                    </div>
+                </div>
+            )}
+
+            {/* AI PROMPT MODAL */}
+            {showAIPromptModal && (
+                <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-in fade-in duration-200" onClick={() => !aiLoading && setShowAIPromptModal(false)}>
+                    <div onClick={e => e.stopPropagation()} className="bg-gray-800 rounded-2xl border border-gray-700 shadow-2xl w-full max-w-lg ring-1 ring-white/10 animate-in zoom-in-95 duration-300">
+                        <div className="p-6 border-b border-gray-700">
+                            <div className="flex items-center gap-3 mb-1">
+                                <div className="bg-gradient-to-r from-purple-600 to-blue-600 p-2 rounded-lg">
+                                    <Brain className="w-5 h-5 text-white" />
+                                </div>
+                                <h3 className="text-lg font-bold text-white">AI Auto-Config</h3>
+                            </div>
+                            <p className="text-sm text-gray-400 mt-2">La IA analizará tu imagen y ajustará automáticamente los parámetros de configuración avanzada.</p>
+                        </div>
+                        <div className="p-6 space-y-4">
+                            <div>
+                                <label className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2 flex items-center gap-2">
+                                    <MessageSquare className="w-3 h-3" /> Instrucciones Adicionales (Opcional)
+                                </label>
+                                <textarea
+                                    value={aiUserPrompt}
+                                    onChange={e => setAiUserPrompt(e.target.value)}
+                                    placeholder="Ej: 'Es un diseño para camiseta negra con 6 colores', 'Priorizar bordes nítidos', 'Usar halftone fino'..."
+                                    className="w-full bg-gray-900 border border-gray-600 rounded-lg p-3 text-sm text-gray-200 placeholder-gray-500 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none resize-none h-24 transition-colors"
+                                    disabled={aiLoading}
+                                />
+                                <p className="text-[10px] text-gray-500 mt-1">Si no escribes nada, la IA analizará basándose solo en la imagen y su entrenamiento previo.</p>
+                            </div>
+                            <div className="flex gap-3">
+                                <button
+                                    onClick={() => { setShowAIPromptModal(false); setAiUserPrompt(''); }}
+                                    disabled={aiLoading}
+                                    className="flex-1 py-2.5 rounded-lg text-sm font-bold text-gray-400 bg-gray-700 hover:bg-gray-600 transition-colors disabled:opacity-50"
+                                >
+                                    Cancelar
+                                </button>
+                                <button
+                                    onClick={async () => {
+                                        if (!originalImage) return;
+                                        setAiLoading(true);
+                                        setAiReasoning(null);
+                                        try {
+                                            const canvas = document.createElement('canvas');
+                                            canvas.width = originalImage.width;
+                                            canvas.height = originalImage.height;
+                                            const ctx = canvas.getContext('2d')!;
+                                            ctx.putImageData(originalImage, 0, 0);
+                                            const base64 = canvas.toDataURL('image/png');
+                                            const result = await analyzeWithAI(base64, aiUserPrompt || undefined);
+                                            if (result) {
+                                                setAdvancedConfig(prev => ({
+                                                    ...prev,
+                                                    separationType: result.separationType,
+                                                    denoiseStrength: result.denoiseStrength,
+                                                    denoiseSpatial: result.denoiseSpatial,
+                                                    cleanupStrength: result.cleanupStrength,
+                                                    minCoverage: result.minCoverage,
+                                                    useRasterAdaptive: result.useRasterAdaptive,
+                                                    useSubstrateKnockout: result.useSubstrateKnockout,
+                                                    substrateColorHex: result.substrateColorHex,
+                                                    substrateThreshold: result.substrateThreshold,
+                                                    gamma: result.gamma,
+                                                    halftoneLpi: result.halftoneLpi,
+                                                }));
+                                                setAiReasoning(result.reasoning);
+                                                setShowAIPromptModal(false);
+                                            } else {
+                                                alert('La IA no pudo analizar la imagen. Revisa la consola para más detalles.');
+                                            }
+                                        } catch (err) {
+                                            console.error('[AI Analysis] Error:', err);
+                                            alert('Error al conectar con la IA. Verifica tu conexión y la API Key.');
+                                        } finally {
+                                            setAiLoading(false);
+                                        }
+                                    }}
+                                    disabled={aiLoading}
+                                    className="flex-1 py-2.5 rounded-lg text-sm font-bold text-white bg-gradient-to-r from-purple-600 via-blue-600 to-cyan-500 hover:from-purple-500 hover:via-blue-500 hover:to-cyan-400 transition-all shadow-lg shadow-purple-900/30 disabled:opacity-50 disabled:cursor-wait flex items-center justify-center gap-2"
+                                >
+                                    {aiLoading ? (
+                                        <><div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"></div> Analizando...</>
+                                    ) : (
+                                        <><Wand2 className="w-4 h-4" /> Analizar con IA</>
+                                    )}
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* AI REASONING TOAST */}
+            {aiReasoning && (
+                <div className="fixed bottom-6 right-6 z-[80] max-w-sm animate-in slide-in-from-right-4 duration-300">
+                    <div className="bg-gray-800 border border-gray-700 rounded-xl shadow-2xl ring-1 ring-white/10 overflow-hidden">
+                        <div className="flex items-center justify-between px-4 py-2 bg-gradient-to-r from-purple-600/20 to-blue-600/20 border-b border-gray-700">
+                            <span className="text-xs font-bold text-purple-300 uppercase tracking-wider flex items-center gap-2">
+                                <Brain className="w-3 h-3" /> AI Reasoning
+                            </span>
+                            <button onClick={() => setAiReasoning(null)} className="text-gray-400 hover:text-white transition-colors">
+                                <X className="w-3 h-3" />
+                            </button>
+                        </div>
+                        <div className="p-4">
+                            <p className="text-sm text-gray-300 leading-relaxed">{aiReasoning}</p>
+                        </div>
                     </div>
                 </div>
             )}

@@ -6,12 +6,7 @@
     <title>ScreenPrint Pro - Pre-press Suite</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/pyodide/v0.27.2/full/pyodide.js"></script>
-    <script type="module">
-        import * as pdfjsLib from 'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.0.379/build/pdf.min.mjs';
-        pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.0.379/build/pdf.worker.min.mjs';
-        window.pdfjsLib = pdfjsLib;
-    </script>
-  <script type="importmap">
+    <script type="importmap">
 {
   "imports": {
     "react/": "https://esm.sh/react@^19.2.4/",
@@ -25,7 +20,12 @@
     "jspdf-autotable": "https://esm.sh/jspdf-autotable@3.8.2"
   }
 }
-</script>
+    </script>
+    <script type="module">
+        import * as pdfjsLib from 'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.0.379/build/pdf.min.mjs';
+        pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.0.379/build/pdf.worker.min.mjs';
+        window.pdfjsLib = pdfjsLib;
+    </script>
 <link rel="stylesheet" href="/index.css">
 </head>
   <body class="bg-gray-950 text-white">
