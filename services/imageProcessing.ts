@@ -365,6 +365,40 @@ def generate_composite_py(layers_list, colors_hex, width, height, alpha):
     composite_final = np.clip(composite, 0, 255).astype(np.uint8)
     rgba = cv2.cvtColor(composite_final, cv2.COLOR_RGB2RGBA)
     return rgba.flatten()
+
+def refine_single_layer_py(layer_data, width, height, cleanup_strength, smooth_edges, despeckle_area):
+    """Post-separation cleanup for a single layer using OpenCV.
+    This allows per-channel noise removal without affecting other channels."""
+    arr = np.array(layer_data.to_py(), dtype=np.uint8).reshape(height, width, 4)
+    alpha_channel = arr[:, :, 3].copy()
+
+    # 1. Morphological Open/Close (removes salt-and-pepper noise)
+    if cleanup_strength > 0:
+        morph_k = min(3 + (int(cleanup_strength) // 3) * 2, 9)
+        if morph_k % 2 == 0:
+            morph_k += 1
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (morph_k, morph_k))
+        alpha_channel = cv2.morphologyEx(alpha_channel, cv2.MORPH_OPEN, kernel)
+        alpha_channel = cv2.morphologyEx(alpha_channel, cv2.MORPH_CLOSE, kernel)
+
+    # 2. Connected Component Despeckle (remove small isolated blobs)
+    if despeckle_area > 0:
+        # Threshold to binary for CC analysis
+        _, binary = cv2.threshold(alpha_channel, 1, 255, cv2.THRESH_BINARY)
+        num_labels, labels_cc, stats, _ = cv2.connectedComponentsWithStats(binary, connectivity=8)
+        for j in range(1, num_labels):
+            if stats[j, cv2.CC_STAT_AREA] < int(despeckle_area):
+                alpha_channel[labels_cc == j] = 0
+
+    # 3. Gaussian Edge Smoothing
+    if smooth_edges > 0:
+        k_size = int(smooth_edges * 2) * 2 + 1
+        alpha_channel = cv2.GaussianBlur(alpha_channel, (k_size, k_size), 0)
+
+    # Rebuild the layer output
+    out = np.zeros((height, width, 4), dtype=np.uint8)
+    out[:, :, 3] = alpha_channel
+    return out.flatten()
 `;
 
 export const initEngine = async () => {
@@ -504,6 +538,23 @@ export const generateComposite = async (layers: Layer[], width: number, height: 
     compProxy.destroy();
     generateCompositePy.destroy();
     return new ImageData(new Uint8ClampedArray(compArray), width, height);
+};
+
+export const refineSingleLayer = async (
+    layerData: ImageData,
+    params: { cleanupStrength: number; smoothEdges: number; despeckleArea: number }
+): Promise<ImageData> => {
+    if (!pyodide) throw new Error("Pyodide not initialized");
+    const { width, height, data } = layerData;
+    const refinePy = pyodide.globals.get('refine_single_layer_py');
+    const resultProxy = await refinePy(
+        data, width, height,
+        params.cleanupStrength, params.smoothEdges, params.despeckleArea
+    );
+    const resultArray = resultProxy.toJs();
+    resultProxy.destroy();
+    refinePy.destroy();
+    return new ImageData(new Uint8ClampedArray(resultArray), width, height);
 };
 
 export const mergeLayersData = (base: ImageData, others: ImageData[]): ImageData => {

@@ -33,7 +33,7 @@ serve(async (req) => {
     }
 
     try {
-        const { image, prompt } = await req.json()
+        const { image, metadata, prompt } = await req.json()
 
         // 1. Get Secret
         const apiKey = Deno.env.get('GEMINI_API_KEY')
@@ -47,22 +47,87 @@ serve(async (req) => {
         const supabaseKey = Deno.env.get('SUPABASE_ANON_KEY')
         const supabase = createClient(supabaseUrl!, supabaseKey!)
 
-        // 3. Fetch RAG Context (Verified Memories)
-        // We try to fetch context, but don't fail if it errors (e.g. table verify fails)
+        // 3. Fetch RAG Context (Verified Memories) via Vector Similarity
         let ragContext = ""
         try {
-            const { data: memories } = await supabase
-                .from('ai_memory')
-                .select('final_config, separation_type, image_metadata')
-                .eq('is_verified', true)
-                .limit(3)
-                .order('created_at', { ascending: false })
+            // A. Generate Descriptive Text for the query image
+            const descriptionPrompt = `Actúa como un analista experto en serigrafía textil.
+He analizado matemáticamente la imagen adjunta y obtenido estos datos:
+- Dimensiones: ${metadata?.width || 'N/A'}x${metadata?.height || 'N/A'}
+- Número de colores: ${metadata?.num_colors || 'N/A'}
+- Paleta Hexadecimal: ${metadata?.palette_hex?.join(', ') || 'N/A'}
 
-            if (memories && memories.length > 0) {
-                ragContext = "\n\nAquí tienes ejemplos de configuraciones exitosas anteriores:\n" + JSON.stringify(memories, null, 2)
+Genera UNA sola descripción técnica y concisa (máximo 2 párrafos) destacando el ESTILO VISUAL de la imagen y las CARACTERÍSTICAS DEL BORDE (fotorrealista, ilustración, bordes limpios, medios tonos, vector, etc.). No inventes colores.`;
+
+            const geminiVisionUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
+            const visionResponse = await fetch(geminiVisionUrl, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    contents: [{
+                        parts: [
+                            { text: descriptionPrompt },
+                            { inline_data: { mime_type: "image/png", data: image.replace(/^data:image\/\w+;base64,/, "") } }
+                        ]
+                    }],
+                    generationConfig: { temperature: 0.3 }
+                })
+            });
+
+            if (visionResponse.ok) {
+                const visionData = await visionResponse.json();
+                const descriptiveText = visionData.candidates?.[0]?.content?.parts?.[0]?.text;
+
+                if (descriptiveText) {
+                    const finalVectorText = `Data:\nColors: ${metadata?.num_colors || 'N/A'}\nHex: ${metadata?.palette_hex?.join(', ') || 'N/A'}\n\nStyle:\n${descriptiveText}`;
+
+                    // B. Embed the text
+                    const embedUrl = `https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:embedContent?key=${apiKey}`;
+                    const embedResponse = await fetch(embedUrl, {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                            model: "models/text-embedding-004",
+                            content: { parts: [{ text: finalVectorText }] }
+                        })
+                    });
+
+                    if (embedResponse.ok) {
+                        const embedData = await embedResponse.json();
+                        const queryEmbedding = embedData.embedding?.values;
+
+                        if (queryEmbedding && Array.isArray(queryEmbedding)) {
+                            // C. Query RPC
+                            // Set threshold low enough to find at least something, or rely on count (LIMIT 3). cosine distance < 0.8 => similarity > 0.2
+                            const { data: memories, error: rpcError } = await supabase.rpc('match_ai_memory', {
+                                query_embedding: queryEmbedding,
+                                match_threshold: 0.4,
+                                match_count: 3
+                            });
+
+                            if (rpcError) {
+                                console.error("RAG RPC error:", rpcError);
+                            } else if (memories && memories.length > 0) {
+                                // Exclude the embeddings/ids from JSON stringification to save tokens
+                                const cleanMemories = memories.map((m: any) => ({
+                                    final_config: m.final_config,
+                                    separation_type: m.separation_type,
+                                    similarity_score: m.similarity
+                                }));
+                                ragContext = "\n\nAquí tienes ejemplos de configuraciones exitosas anteriores para imágenes SIMILARES guardadas en memoria:\n" + JSON.stringify(cleanMemories, null, 2);
+                            } else {
+                                console.log("RAG RPC returned 0 matches above threshold.");
+                            }
+                        }
+                    } else {
+                        console.error("Gemini Embed Failed:", await embedResponse.text());
+                    }
+                }
+            } else {
+                console.error("Gemini Vision Failed:", await visionResponse.text());
             }
         } catch (ragError) {
-            console.warn("RAG Context fetch failed, proceeding without it:", ragError)
+            console.warn("RAG Context fetch failed, proceeding without it:", ragError);
         }
 
         // 4. Construct Prompt

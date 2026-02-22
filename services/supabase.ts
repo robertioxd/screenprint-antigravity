@@ -81,6 +81,7 @@ export interface AIAnalysisResult {
 // ==========================================
 
 export interface TrainingData {
+    image: string; // Base64 image
     final_config: Record<string, unknown>;
     separation_type: 'vector' | 'raster';
     image_metadata: {
@@ -103,14 +104,14 @@ export async function saveTrainingData(data: TrainingData): Promise<boolean> {
     }
 
     try {
-        const { error } = await supabase
-            .from('ai_memory')
-            .insert({
+        const { error } = await supabase.functions.invoke('train-memory', {
+            body: {
+                image: data.image,
                 final_config: data.final_config,
                 separation_type: data.separation_type,
-                image_metadata: data.image_metadata,
-                is_verified: true,
-            });
+                image_metadata: data.image_metadata
+            }
+        });
 
         if (error) {
             console.error('[AI Training] Save error:', error.message);
@@ -127,6 +128,7 @@ export async function saveTrainingData(data: TrainingData): Promise<boolean> {
 
 export async function analyzeWithAI(
     imageBase64: string,
+    image_metadata: { width: number, height: number, num_colors: number, palette_hex: string[] },
     userPrompt?: string
 ): Promise<AIAnalysisResult | null> {
     if (!supabase) {
@@ -138,6 +140,7 @@ export async function analyzeWithAI(
         const { data, error } = await supabase.functions.invoke('analyze-image', {
             body: {
                 image: imageBase64,
+                metadata: image_metadata,
                 prompt: userPrompt ?? '',
             },
         });

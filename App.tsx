@@ -11,8 +11,10 @@ import GuideSection from './components/GuideSection';
 import Button from './components/Button';
 import LayerDetailModal from './components/LayerDetailModal';
 import { ChopModal, MergeModal, EditColorModal } from './components/LayerActionModals';
+import RefineModal, { RefineParams } from './components/RefineModal';
+import DonutSpinner from './components/DonutSpinner';
 import { Layer, PaletteColor, ProcessingStatus, AdvancedConfig, DEFAULT_CONFIG } from './types';
-import { analyzePalette, performSeparation, applyHalftone, initEngine, generateComposite, getPyodideInfo, hexToRgb, mergeLayersData, createGrayscaleFromAlpha, resizeImage } from './services/imageProcessing';
+import { analyzePalette, performSeparation, applyHalftone, initEngine, generateComposite, getPyodideInfo, hexToRgb, mergeLayersData, createGrayscaleFromAlpha, resizeImage, refineSingleLayer } from './services/imageProcessing';
 import { downloadComposite, downloadChannelsZip } from './services/exportService';
 import { analyzeWithAI, AIAnalysisResult, supabase, saveTrainingData } from './services/supabase';
 import { exportLayersAsEPS } from './services/zipExport';
@@ -59,7 +61,7 @@ const App: React.FC = () => {
 
     // Layer Management State
     const [previewLayerIndex, setPreviewLayerIndex] = useState<number | null>(null);
-    const [modalMode, setModalMode] = useState<'view' | 'chop' | 'merge' | 'edit'>('view');
+    const [modalMode, setModalMode] = useState<'view' | 'chop' | 'merge' | 'edit' | 'refine'>('view');
     const [draggedLayerIndex, setDraggedLayerIndex] = useState<number | null>(null);
 
     // Auth Effect
@@ -250,30 +252,46 @@ const App: React.FC = () => {
 
     // Update composite whenever layers or configs change (debounced composite)
     useEffect(() => {
-        if (layers.length > 0 && (activeTab === 'separation' || activeTab === 'halftone' || activeTab === 'compare')) {
+        // Only re-generate if layers actually exist and we are not in 'original' or 'guide' mode.
+        // REMOVED 'activeTab' from dependencies. This prevents the costly synchronous Web API redraw
+        // when jumping between 'separation' and 'compare' tabs. The composite memory stays warm.
+        if (layers.length > 0) {
             const updateComposite = async () => {
                 const width = layers[0].data.width;
                 const height = layers[0].data.height;
+                // Generate composite async
                 const comp = await generateComposite(layers, width, height, advancedConfig);
                 setCompositeImage(comp);
             };
             updateComposite();
         }
-    }, [advancedConfig.inkOpacity, layers, activeTab]);
+    }, [advancedConfig.inkOpacity, layers]);
 
     /* --- LAYER ACTIONS LOGIC --- */
 
-    const handleLayerAction = (action: 'chop' | 'merge' | 'edit' | 'delete', layer: Layer) => {
+    const handleLayerAction = (action: 'chop' | 'merge' | 'edit' | 'delete' | 'refine', layer: Layer) => {
         if (action === 'delete') {
             if (window.confirm(`¿Estás seguro de que deseas eliminar permanentemente el canal ${layer.color.hex}?`)) {
                 setPreviewLayerIndex(null);
                 const newLayers = layers.filter(l => l.id !== layer.id);
                 updateLayersWithHistory(newLayers);
-                // We don't remove palette color just in case they want to use it again or undo
             }
         } else {
             setModalMode(action);
         }
+    };
+
+    const handleRefineLayer = async (params: RefineParams) => {
+        if (previewLayerIndex === null) return;
+        const targetLayer = layers[previewLayerIndex];
+        const refinedData = await refineSingleLayer(targetLayer.data, params);
+        const newLayers = [...layers];
+        newLayers[previewLayerIndex] = {
+            ...targetLayer,
+            data: refinedData
+        };
+        updateLayersWithHistory(newLayers);
+        setModalMode('view');
     };
 
     const toggleLayerVisibility = (index: number) => {
@@ -556,7 +574,15 @@ const App: React.FC = () => {
                                         if (!originalImage || layers.length === 0) return;
                                         setTrainingStatus('saving');
                                         try {
+                                            const canvas = document.createElement('canvas');
+                                            canvas.width = originalImage.width;
+                                            canvas.height = originalImage.height;
+                                            const ctx = canvas.getContext('2d')!;
+                                            ctx.putImageData(originalImage, 0, 0);
+                                            const base64 = canvas.toDataURL('image/png');
+
                                             const success = await saveTrainingData({
+                                                image: base64,
                                                 final_config: advancedConfig as unknown as Record<string, unknown>,
                                                 separation_type: advancedConfig.separationType as 'vector' | 'raster',
                                                 image_metadata: {
@@ -830,6 +856,13 @@ const App: React.FC = () => {
                                 onSave={handleEditColorSave}
                             />
                         )}
+                        {modalMode === 'refine' && (
+                            <RefineModal
+                                layer={layers[previewLayerIndex]}
+                                onClose={() => setModalMode('view')}
+                                onApply={handleRefineLayer}
+                            />
+                        )}
                     </div>
                 </div>
             )}
@@ -878,10 +911,14 @@ const App: React.FC = () => {
                                             const canvas = document.createElement('canvas');
                                             canvas.width = originalImage.width;
                                             canvas.height = originalImage.height;
-                                            const ctx = canvas.getContext('2d')!;
-                                            ctx.putImageData(originalImage, 0, 0);
                                             const base64 = canvas.toDataURL('image/png');
-                                            const result = await analyzeWithAI(base64, aiUserPrompt || undefined);
+                                            const metadata = {
+                                                width: originalImage.width,
+                                                height: originalImage.height,
+                                                num_colors: palette.length,
+                                                palette_hex: palette.map(p => p.hex)
+                                            };
+                                            const result = await analyzeWithAI(base64, metadata, aiUserPrompt || undefined);
                                             if (result) {
                                                 setAdvancedConfig(prev => ({
                                                     ...prev,

@@ -7,15 +7,15 @@ import { splitByLasso } from '../services/imageProcessing';
 
 /* --- CHOP MODAL --- */
 interface ChopModalProps {
-  layer: Layer;
-  onClose: () => void;
-  onGenerate: (config: AdvancedConfig, sublayerCount: number) => Promise<Layer[]>;
-  onApply: (keptLayers: Layer[], layersToMerge: Layer[]) => void;
+    layer: Layer;
+    onClose: () => void;
+    onGenerate: (config: AdvancedConfig, sublayerCount: number) => Promise<Layer[]>;
+    onApply: (keptLayers: Layer[], layersToMerge: Layer[]) => void;
 }
 
 export const ChopModal: React.FC<ChopModalProps> = ({ layer, onClose, onGenerate, onApply }) => {
     const [mode, setMode] = useState<'auto' | 'manual'>('auto');
-    
+
     // Auto Mode State
     const [method, setMethod] = useState<'vector' | 'raster'>('raster');
     const [sublayerCount, setSublayerCount] = useState(3);
@@ -25,16 +25,16 @@ export const ChopModal: React.FC<ChopModalProps> = ({ layer, onClose, onGenerate
     const [loading, setLoading] = useState(false);
 
     // Manual Mode State
-    const [manualLayers, setManualLayers] = useState<Layer[]>([{ ...layer, id: `manual-base-${Date.now()}`, visible: true }]); 
-    const [activeManualIndex, setActiveManualIndex] = useState(0); 
-    const [lassoPoints, setLassoPoints] = useState<{x: number, y: number}[]>([]);
-    
+    const [manualLayers, setManualLayers] = useState<Layer[]>([{ ...layer, id: `manual-base-${Date.now()}`, visible: true }]);
+    const [activeManualIndex, setActiveManualIndex] = useState(0);
+    const [lassoPoints, setLassoPoints] = useState<{ x: number, y: number }[]>([]);
+
     // Manual Tools State
     const [toolType, setToolType] = useState<'freehand' | 'polygon'>('freehand');
     const [isDrawing, setIsDrawing] = useState(false);
-    const [cursorPos, setCursorPos] = useState<{x: number, y: number} | null>(null);
+    const [cursorPos, setCursorPos] = useState<{ x: number, y: number } | null>(null);
     const [zoom, setZoom] = useState(1.0);
-    
+
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const containerRef = useRef<HTMLDivElement>(null);
 
@@ -45,16 +45,14 @@ export const ChopModal: React.FC<ChopModalProps> = ({ layer, onClose, onGenerate
             const imgW = manualLayers[0].data.width;
             const imgH = manualLayers[0].data.height;
             const contW = container.clientWidth - 100; // Padding buffer
-            const contH = container.clientHeight - 100; 
+            const contH = container.clientHeight - 100;
 
             if (imgW > 0 && imgH > 0) {
                 const scaleX = contW / imgW;
                 const scaleY = contH / imgH;
                 const fitScale = Math.min(scaleX, scaleY);
-                // Set zoom to fit, capped at 1.0 (don't scale up small images initially)
-                // but allow scaling down for large images
-                const finalZoom = fitScale < 1.0 ? fitScale : 1.0;
-                setZoom(parseFloat(finalZoom.toFixed(2)));
+                // Set zoom to exactly fit the initial container, ignoring the 1.0 artificial cap so large images fit 100% on start
+                setZoom(parseFloat(fitScale.toFixed(2)));
             }
         }
     }, [mode]);
@@ -65,19 +63,19 @@ export const ChopModal: React.FC<ChopModalProps> = ({ layer, onClose, onGenerate
         // Use DEFAULT_CONFIG as base to ensure all required properties
         const tempConfig: AdvancedConfig = {
             ...DEFAULT_CONFIG,
-            sampleSize: 10000, 
-            inkOpacity: 1, 
-            kL: 1, 
-            kC: 1, 
+            sampleSize: 10000,
+            inkOpacity: 1,
+            kL: 1,
+            kC: 1,
             kH: 1,
-            separationMethod: 'ciede2000', 
+            separationMethod: 'ciede2000',
             separationType: method,
-            cleanupStrength: 3, 
+            cleanupStrength: 3,
             smoothEdges: 0,
             minCoverage: 0.5,
-            halftoneType: 'am', 
-            halftoneLpi: 50, 
-            halftoneAngle: 22.5, 
+            halftoneType: 'am',
+            halftoneLpi: 50,
+            halftoneAngle: 22.5,
             gamma: 1.0,
             useVectorAntiAliasing: true,
             useRasterAdaptive: true
@@ -103,20 +101,20 @@ export const ChopModal: React.FC<ChopModalProps> = ({ layer, onClose, onGenerate
             if (keepState[idx]) kept.push(l);
             else toMerge.push(l);
         });
-        onApply(kept, toMerge); 
+        onApply(kept, toMerge);
     };
 
     // --- MANUAL MODE HANDLERS (LASSO) ---
 
     useEffect(() => {
         if (mode !== 'manual' || !canvasRef.current) return;
-        
+
         const canvas = canvasRef.current;
         const ctx = canvas.getContext('2d');
         if (!ctx) return;
-        
+
         const targetLayer = manualLayers[activeManualIndex];
-        
+
         // Ensure proper sizing
         if (canvas.width !== targetLayer.data.width || canvas.height !== targetLayer.data.height) {
             canvas.width = targetLayer.data.width;
@@ -132,7 +130,7 @@ export const ChopModal: React.FC<ChopModalProps> = ({ layer, onClose, onGenerate
             ctx.strokeStyle = '#00ff00';
             ctx.lineWidth = 2 / zoom; // Maintain consistent visual width regardless of zoom
             ctx.setLineDash([5 / zoom, 5 / zoom]);
-            
+
             ctx.beginPath();
             ctx.moveTo(lassoPoints[0].x, lassoPoints[0].y);
             for (let i = 1; i < lassoPoints.length; i++) {
@@ -141,7 +139,7 @@ export const ChopModal: React.FC<ChopModalProps> = ({ layer, onClose, onGenerate
 
             // Rubber-band line for polygon mode
             if (toolType === 'polygon' && cursorPos) {
-                 ctx.lineTo(cursorPos.x, cursorPos.y);
+                ctx.lineTo(cursorPos.x, cursorPos.y);
             }
 
             // Fill preview for freehand when mouse is released
@@ -150,14 +148,14 @@ export const ChopModal: React.FC<ChopModalProps> = ({ layer, onClose, onGenerate
                 ctx.fillStyle = 'rgba(0, 255, 0, 0.2)';
                 ctx.fill();
             }
-            
+
             ctx.stroke();
-            
+
             // Draw visual nodes for polygon mode (little squares)
             if (toolType === 'polygon') {
                 ctx.fillStyle = '#00ff00';
                 lassoPoints.forEach(p => {
-                    ctx.fillRect(p.x - 3/zoom, p.y - 3/zoom, 6/zoom, 6/zoom);
+                    ctx.fillRect(p.x - 3 / zoom, p.y - 3 / zoom, 6 / zoom, 6 / zoom);
                 });
             }
         }
@@ -199,13 +197,13 @@ export const ChopModal: React.FC<ChopModalProps> = ({ layer, onClose, onGenerate
     const handleMouseUp = () => {
         if (toolType === 'freehand') setIsDrawing(false);
     };
-    
+
     const handleDoubleClick = (e: React.MouseEvent) => {
-         if (toolType === 'polygon') {
-             e.preventDefault();
-             // Stop rubber-band preview
-             setCursorPos(null);
-         }
+        if (toolType === 'polygon') {
+            e.preventDefault();
+            // Stop rubber-band preview
+            setCursorPos(null);
+        }
     };
 
     const handleManualSplit = () => {
@@ -228,7 +226,7 @@ export const ChopModal: React.FC<ChopModalProps> = ({ layer, onClose, onGenerate
             const updatedLayers = [...manualLayers];
             updatedLayers.splice(activeManualIndex, 1, newLayerOutside, newLayerInside);
             setManualLayers(updatedLayers);
-            setLassoPoints([]); 
+            setLassoPoints([]);
             setActiveManualIndex(activeManualIndex); // Stay on outside layer
         } catch (err) {
             console.error(err);
@@ -237,18 +235,18 @@ export const ChopModal: React.FC<ChopModalProps> = ({ layer, onClose, onGenerate
     };
 
     const handleManualDelete = () => {
-         if (lassoPoints.length < 3) return;
-         const targetLayer = manualLayers[activeManualIndex];
-         const [, outside] = splitByLasso(targetLayer.data, lassoPoints);
-         const newLayerOutside: Layer = {
-             ...targetLayer,
-             id: `manual-mod-${Date.now()}`,
-             data: outside
-         };
-         const updatedLayers = [...manualLayers];
-         updatedLayers[activeManualIndex] = newLayerOutside;
-         setManualLayers(updatedLayers);
-         setLassoPoints([]);
+        if (lassoPoints.length < 3) return;
+        const targetLayer = manualLayers[activeManualIndex];
+        const [, outside] = splitByLasso(targetLayer.data, lassoPoints);
+        const newLayerOutside: Layer = {
+            ...targetLayer,
+            id: `manual-mod-${Date.now()}`,
+            data: outside
+        };
+        const updatedLayers = [...manualLayers];
+        updatedLayers[activeManualIndex] = newLayerOutside;
+        setManualLayers(updatedLayers);
+        setLassoPoints([]);
     };
 
     const handleApplyManual = () => onApply(manualLayers, []);
@@ -269,12 +267,12 @@ export const ChopModal: React.FC<ChopModalProps> = ({ layer, onClose, onGenerate
                 </div>
                 <button onClick={onClose}><X className="text-gray-500 hover:text-red-500" /></button>
             </div>
-            
+
             {mode === 'auto' ? (
                 <div className="flex-1 flex flex-col min-h-0">
                     <div className="p-4 bg-blue-50/50 border-b border-gray-200 text-sm text-gray-600 shrink-0">Algorithmically divide using color distance (CIEDE2000).</div>
                     <div className="p-6 space-y-6 overflow-y-auto">
-                         <div className="flex items-end gap-4 bg-white p-4 rounded-lg border border-gray-200 shadow-sm">
+                        <div className="flex items-end gap-4 bg-white p-4 rounded-lg border border-gray-200 shadow-sm">
                             <div className="flex-1 space-y-2">
                                 <label className="text-xs font-bold text-gray-500 uppercase">Metodo</label>
                                 <select value={method} onChange={(e) => setMethod(e.target.value as any)} className="w-full bg-gray-50 border border-gray-300 rounded p-2 text-gray-800 text-sm">
@@ -284,18 +282,18 @@ export const ChopModal: React.FC<ChopModalProps> = ({ layer, onClose, onGenerate
                             </div>
                             <div className="w-24 space-y-2">
                                 <label className="text-xs font-bold text-gray-500 uppercase">Cantidad</label>
-                                <input type="number" min="2" max="6" value={sublayerCount} onChange={(e) => setSublayerCount(parseInt(e.target.value))} className="w-full bg-gray-50 border border-gray-300 rounded p-2 text-gray-800 text-sm"/>
+                                <input type="number" min="2" max="6" value={sublayerCount} onChange={(e) => setSublayerCount(parseInt(e.target.value))} className="w-full bg-gray-50 border border-gray-300 rounded p-2 text-gray-800 text-sm" />
                             </div>
                             <Button onClick={handleGenerate} isLoading={loading} className="bg-indigo-600 hover:bg-indigo-700 h-10"><RefreshCw className="w-4 h-4 mr-2" /> Generar</Button>
                         </div>
-                         {autoGeneratedLayers.length > 0 && (
+                        {autoGeneratedLayers.length > 0 && (
                             <div className="grid grid-cols-3 gap-4 pb-4">
                                 {autoGeneratedLayers.map((sub, idx) => !deletedState[idx] && (
                                     <div key={idx} className={`bg-white rounded-lg border-2 overflow-hidden transition-all relative group ${keepState[idx] ? 'border-indigo-500 shadow-md' : 'border-gray-200 opacity-60'}`}>
                                         <div className="aspect-square bg-gray-100 relative"><LayerPreview imageData={sub.data} width={sub.data.width} height={sub.data.height} tint={sub.color.hex} /></div>
                                         <div className="p-2 flex flex-col gap-2 border-t border-gray-100">
-                                             <div className="flex justify-between items-center"><span className="text-[10px] font-bold text-gray-500">Sublayer {idx + 1}</span><button onClick={() => { const d = [...deletedState]; d[idx] = true; setDeletedState(d); }} className="text-gray-300 hover:text-red-500"><Trash2 className="w-3 h-3"/></button></div>
-                                            <button onClick={() => { const k = [...keepState]; k[idx] = !k[idx]; setKeepState(k); }} className={`w-full py-1 text-[10px] font-bold uppercase rounded flex items-center justify-center gap-1 ${keepState[idx] ? 'bg-indigo-100 text-indigo-700' : 'bg-gray-100 text-gray-500'}`}>{keepState[idx] ? <Check className="w-3 h-3"/> : null} {keepState[idx] ? 'Manten' : 'Unir'}</button>
+                                            <div className="flex justify-between items-center"><span className="text-[10px] font-bold text-gray-500">Sublayer {idx + 1}</span><button onClick={() => { const d = [...deletedState]; d[idx] = true; setDeletedState(d); }} className="text-gray-300 hover:text-red-500"><Trash2 className="w-3 h-3" /></button></div>
+                                            <button onClick={() => { const k = [...keepState]; k[idx] = !k[idx]; setKeepState(k); }} className={`w-full py-1 text-[10px] font-bold uppercase rounded flex items-center justify-center gap-1 ${keepState[idx] ? 'bg-indigo-100 text-indigo-700' : 'bg-gray-100 text-gray-500'}`}>{keepState[idx] ? <Check className="w-3 h-3" /> : null} {keepState[idx] ? 'Manten' : 'Unir'}</button>
                                         </div>
                                     </div>
                                 ))}
@@ -306,79 +304,81 @@ export const ChopModal: React.FC<ChopModalProps> = ({ layer, onClose, onGenerate
                 </div>
             ) : (
                 <div className="flex-1 flex flex-col min-h-0 bg-gray-900">
-                     <div className="p-2 bg-gray-800 border-b border-gray-700 text-xs text-gray-400 flex items-center justify-between shrink-0 h-14">
-                         <div className="flex items-center gap-4">
+                    <div className="p-2 bg-gray-800 border-b border-gray-700 text-xs text-gray-400 flex items-center justify-between shrink-0 h-14">
+                        <div className="flex items-center gap-4">
                             {/* ZOOM CONTROLLER */}
                             <div className="flex items-center gap-2 bg-gray-700 rounded-lg px-3 py-1.5 border border-gray-600 shadow-inner">
-                                <ZoomOut className="w-3 h-3 text-gray-400"/>
-                                <input 
-                                    type="range" 
-                                    min="0.1" 
-                                    max="5.0" 
-                                    step="0.05" 
-                                    value={zoom} 
-                                    onChange={(e) => setZoom(parseFloat(e.target.value))} 
+                                <ZoomOut className="w-3 h-3 text-gray-400" />
+                                <input
+                                    type="range"
+                                    min="0.1"
+                                    max="5.0"
+                                    step="0.05"
+                                    value={zoom}
+                                    onChange={(e) => setZoom(parseFloat(e.target.value))}
                                     className="w-24 h-1.5 bg-gray-600 rounded-lg appearance-none cursor-pointer accent-blue-500"
                                 />
-                                <ZoomIn className="w-3 h-3 text-gray-400"/>
+                                <ZoomIn className="w-3 h-3 text-gray-400" />
                                 <span className="text-[10px] font-mono w-8 text-right text-blue-400 font-bold">{Math.round(zoom * 100)}%</span>
                             </div>
 
                             {/* TOOL TOGGLE */}
                             <div className="flex bg-gray-700 rounded-lg p-1 border border-gray-600">
-                                <button 
-                                    onClick={() => { setToolType('freehand'); setLassoPoints([]); }} 
+                                <button
+                                    onClick={() => { setToolType('freehand'); setLassoPoints([]); }}
                                     className={`flex items-center gap-1 px-3 py-1.5 rounded-md text-[10px] uppercase font-bold transition-all ${toolType === 'freehand' ? 'bg-blue-600 text-white shadow-lg' : 'hover:bg-gray-600'}`}
                                 >
                                     <PenTool className="w-3 h-3" /> Mano Alzada
                                 </button>
-                                <button 
-                                    onClick={() => { setToolType('polygon'); setLassoPoints([]); }} 
+                                <button
+                                    onClick={() => { setToolType('polygon'); setLassoPoints([]); }}
                                     className={`flex items-center gap-1 px-3 py-1.5 rounded-md text-[10px] uppercase font-bold transition-all ${toolType === 'polygon' ? 'bg-blue-600 text-white shadow-lg' : 'hover:bg-gray-600'}`}
                                 >
                                     <MousePointerClick className="w-3 h-3" /> Poligonal
                                 </button>
                             </div>
 
-                            <Button 
-                                size="sm" 
-                                variant="ghost" 
-                                onClick={() => setLassoPoints([])} 
+                            <Button
+                                size="sm"
+                                variant="ghost"
+                                onClick={() => setLassoPoints([])}
                                 disabled={lassoPoints.length === 0}
                                 className="text-[10px] uppercase font-bold h-8 px-2"
                             >
                                 Limpiar Puntos
                             </Button>
-                         </div>
-                         <div className="flex gap-2">
-                             <Button size="sm" variant="secondary" disabled={lassoPoints.length < 3} onClick={handleManualDelete} className="text-[10px] py-1 h-9 bg-red-900/50 hover:bg-red-800 border-red-800 text-red-200"><Eraser className="w-3 h-3 mr-1" /> Borrar Área</Button>
-                             <Button size="sm" variant="primary" disabled={lassoPoints.length < 3} onClick={handleManualSplit} className="text-[10px] py-1 h-9 bg-blue-600 hover:bg-blue-500 shadow-lg shadow-blue-900/40 font-black"><Scissors className="w-3 h-3 mr-1" /> Dividir Capa</Button>
-                         </div>
+                        </div>
+                        <div className="flex gap-2">
+                            <Button size="sm" variant="secondary" disabled={lassoPoints.length < 3} onClick={handleManualDelete} className="text-[10px] py-1 h-9 bg-red-900/50 hover:bg-red-800 border-red-800 text-red-200"><Eraser className="w-3 h-3 mr-1" /> Borrar Área</Button>
+                            <Button size="sm" variant="primary" disabled={lassoPoints.length < 3} onClick={handleManualSplit} className="text-[10px] py-1 h-9 bg-blue-600 hover:bg-blue-500 shadow-lg shadow-blue-900/40 font-black"><Scissors className="w-3 h-3 mr-1" /> Dividir Capa</Button>
+                        </div>
                     </div>
 
                     <div className="flex-1 flex overflow-hidden">
-                        <div 
+                        <div
                             ref={containerRef}
-                            className="flex-1 relative bg-[url('https://www.transparenttextures.com/patterns/checkerboard.png')] bg-gray-800 overflow-auto flex items-center justify-center p-12 custom-scrollbar"
+                            className="flex-1 bg-[url('https://www.transparenttextures.com/patterns/checkerboard.png')] bg-gray-800 overflow-auto custom-scrollbar relative"
                         >
-                            <div 
-                                style={{ 
-                                    width: currentManualLayer ? currentManualLayer.data.width * zoom : 0,
-                                    height: currentManualLayer ? currentManualLayer.data.height * zoom : 0,
-                                }} 
-                                className="shadow-2xl border border-gray-600 bg-white flex-shrink-0"
-                            >
-                                <canvas 
-                                    ref={canvasRef} 
-                                    onMouseDown={handleMouseDown} 
-                                    onMouseMove={handleMouseMove} 
-                                    onMouseUp={handleMouseUp} 
-                                    onDoubleClick={handleDoubleClick} 
-                                    className="cursor-crosshair block bg-black/20 w-full h-full" 
-                                    style={{ 
-                                        imageRendering: zoom > 1.2 ? 'pixelated' : 'auto' 
+                            <div className="min-w-full min-h-full p-12 flex">
+                                <div
+                                    style={{
+                                        width: currentManualLayer ? currentManualLayer.data.width * zoom : 0,
+                                        height: currentManualLayer ? currentManualLayer.data.height * zoom : 0,
                                     }}
-                                />
+                                    className="shadow-2xl border border-gray-600 bg-white flex-shrink-0 m-auto"
+                                >
+                                    <canvas
+                                        ref={canvasRef}
+                                        onMouseDown={handleMouseDown}
+                                        onMouseMove={handleMouseMove}
+                                        onMouseUp={handleMouseUp}
+                                        onDoubleClick={handleDoubleClick}
+                                        className="cursor-crosshair block bg-black/20 w-full h-full"
+                                        style={{
+                                            imageRendering: zoom > 1.2 ? 'pixelated' : 'auto'
+                                        }}
+                                    />
+                                </div>
                             </div>
                         </div>
 
@@ -386,15 +386,15 @@ export const ChopModal: React.FC<ChopModalProps> = ({ layer, onClose, onGenerate
                             <div className="p-3 text-[10px] font-black text-gray-500 uppercase tracking-widest bg-gray-900 border-b border-gray-700">Capas de Trabajo</div>
                             <div className="flex-1 overflow-y-auto p-3 space-y-3 custom-scrollbar">
                                 {manualLayers.map((l, idx) => (
-                                    <div 
-                                        key={l.id} 
-                                        onClick={() => { setActiveManualIndex(idx); setLassoPoints([]); }} 
+                                    <div
+                                        key={l.id}
+                                        onClick={() => { setActiveManualIndex(idx); setLassoPoints([]); }}
                                         className={`p-2 rounded-lg border-2 cursor-pointer transition-all ${activeManualIndex === idx ? 'bg-blue-600/20 border-blue-500 shadow-lg scale-[1.02]' : 'bg-gray-700 border-gray-600 opacity-60 hover:opacity-100'}`}
                                     >
                                         <div className="aspect-video bg-gray-900 mb-2 rounded overflow-hidden pointer-events-none border border-white/5"><LayerPreview imageData={l.data} width={l.data.width} height={l.data.height} tint={l.color.hex} /></div>
                                         <div className="flex justify-between items-center">
-                                            <span className="text-[10px] text-gray-400 font-bold uppercase">Pieza {idx+1}</span>
-                                            {manualLayers.length > 1 && (<button onClick={(e) => { e.stopPropagation(); setManualLayers(prev => prev.filter((_, i) => i !== idx)); setActiveManualIndex(0); }} className="text-gray-500 hover:text-red-400 p-1"><Trash2 className="w-3 h-3"/></button>)}
+                                            <span className="text-[10px] text-gray-400 font-bold uppercase">Pieza {idx + 1}</span>
+                                            {manualLayers.length > 1 && (<button onClick={(e) => { e.stopPropagation(); setManualLayers(prev => prev.filter((_, i) => i !== idx)); setActiveManualIndex(0); }} className="text-gray-500 hover:text-red-400 p-1"><Trash2 className="w-3 h-3" /></button>)}
                                         </div>
                                     </div>
                                 ))}
@@ -428,28 +428,28 @@ export const MergeModal: React.FC<MergeModalProps> = ({ targetLayer, allLayers, 
     };
     return (
         <div className="bg-gray-100 rounded-lg shadow-2xl w-full max-w-4xl flex flex-col overflow-hidden max-h-[90vh]">
-             <div className="bg-gray-200 p-4 border-b border-gray-300 flex justify-between items-center"><h3 className="text-lg font-bold text-gray-800">Merge Layers with {targetLayer.color.hex}</h3><button onClick={onClose}><X className="text-gray-500 hover:text-red-500" /></button></div>
-             <div className="p-4 bg-yellow-50/50 border-b border-gray-200 text-xs text-gray-600">Select layers to merge with the current layer.</div>
-             <div className="p-6 grid grid-cols-2 gap-8">
+            <div className="bg-gray-200 p-4 border-b border-gray-300 flex justify-between items-center"><h3 className="text-lg font-bold text-gray-800">Merge Layers with {targetLayer.color.hex}</h3><button onClick={onClose}><X className="text-gray-500 hover:text-red-500" /></button></div>
+            <div className="p-4 bg-yellow-50/50 border-b border-gray-200 text-xs text-gray-600">Select layers to merge with the current layer.</div>
+            <div className="p-6 grid grid-cols-2 gap-8">
                 <div className="space-y-4">
-                     <h4 className="text-xs font-bold text-gray-500 uppercase">Select Layers</h4>
-                     <div className="grid grid-cols-2 gap-3 max-h-96 overflow-y-auto pr-2 custom-scrollbar">
+                    <h4 className="text-xs font-bold text-gray-500 uppercase">Select Layers</h4>
+                    <div className="grid grid-cols-2 gap-3 max-h-96 overflow-y-auto pr-2 custom-scrollbar">
                         {otherLayers.map(layer => (
                             <div key={layer.id} onClick={() => toggleLayer(layer.id)} className={`cursor-pointer rounded-lg border-2 p-2 transition-all ${selectedIds.has(layer.id) ? 'border-indigo-500 bg-indigo-50' : 'border-gray-200 bg-white hover:border-gray-300'}`}>
                                 <div className="aspect-video bg-gray-100 mb-2 rounded overflow-hidden"><LayerPreview imageData={layer.data} width={layer.data.width} height={layer.data.height} tint={layer.color.hex} /></div>
-                                <div className="text-center"><div className="w-2 h-2 rounded-full inline-block mr-1" style={{backgroundColor: layer.color.hex}}></div><span className="text-[10px] font-mono font-bold text-gray-600">{layer.color.hex}</span></div>
+                                <div className="text-center"><div className="w-2 h-2 rounded-full inline-block mr-1" style={{ backgroundColor: layer.color.hex }}></div><span className="text-[10px] font-mono font-bold text-gray-600">{layer.color.hex}</span></div>
                             </div>
                         ))}
-                     </div>
+                    </div>
                 </div>
                 <div className="space-y-4">
                     <h4 className="text-xs font-bold text-gray-500 uppercase">Final Color</h4>
                     <div className="space-y-2">
-                        <label className={`flex items-center gap-3 p-3 rounded border cursor-pointer ${finalColorHex === targetLayer.color.hex ? 'bg-white border-indigo-500 shadow-sm' : 'border-transparent hover:bg-gray-200'}`}><input type="radio" name="finalColor" checked={finalColorHex === targetLayer.color.hex} onChange={() => setFinalColorHex(targetLayer.color.hex)}/><div className="w-6 h-6 rounded border border-gray-300" style={{backgroundColor: targetLayer.color.hex}}></div><span className="text-sm font-bold text-gray-700">Actual ({targetLayer.color.hex})</span></label>
+                        <label className={`flex items-center gap-3 p-3 rounded border cursor-pointer ${finalColorHex === targetLayer.color.hex ? 'bg-white border-indigo-500 shadow-sm' : 'border-transparent hover:bg-gray-200'}`}><input type="radio" name="finalColor" checked={finalColorHex === targetLayer.color.hex} onChange={() => setFinalColorHex(targetLayer.color.hex)} /><div className="w-6 h-6 rounded border border-gray-300" style={{ backgroundColor: targetLayer.color.hex }}></div><span className="text-sm font-bold text-gray-700">Actual ({targetLayer.color.hex})</span></label>
                         {Array.from(selectedIds).map(id => {
                             const l = otherLayers.find(ol => ol.id === id);
                             if (!l) return null;
-                            return (<label key={l.id} className={`flex items-center gap-3 p-3 rounded border cursor-pointer ${finalColorHex === l.color.hex ? 'bg-white border-indigo-500 shadow-sm' : 'border-transparent hover:bg-gray-200'}`}><input type="radio" name="finalColor" checked={finalColorHex === l.color.hex} onChange={() => setFinalColorHex(l.color.hex)}/><div className="w-6 h-6 rounded border border-gray-300" style={{backgroundColor: l.color.hex}}></div><span className="text-sm font-bold text-gray-700">Destino ({l.color.hex})</span></label>);
+                            return (<label key={l.id} className={`flex items-center gap-3 p-3 rounded border cursor-pointer ${finalColorHex === l.color.hex ? 'bg-white border-indigo-500 shadow-sm' : 'border-transparent hover:bg-gray-200'}`}><input type="radio" name="finalColor" checked={finalColorHex === l.color.hex} onChange={() => setFinalColorHex(l.color.hex)} /><div className="w-6 h-6 rounded border border-gray-300" style={{ backgroundColor: l.color.hex }}></div><span className="text-sm font-bold text-gray-700">Destino ({l.color.hex})</span></label>);
                         })}
                     </div>
                 </div>
@@ -472,9 +472,9 @@ export const EditColorModal: React.FC<EditColorModalProps> = ({ layer, onClose, 
         <div className="bg-gray-100 rounded-lg shadow-2xl w-full max-w-md flex flex-col overflow-hidden">
             <div className="bg-gray-200 p-4 border-b border-gray-300 flex justify-between items-center"><h3 className="text-lg font-bold text-gray-800">Edit Layer Color</h3><button onClick={onClose}><X className="text-gray-500 hover:text-red-500" /></button></div>
             <div className="p-6 space-y-4">
-                <input type="color" value={hex} onChange={(e) => setHex(e.target.value)} className="w-full h-12 p-1 bg-white border border-gray-300 rounded cursor-pointer"/>
-                <input type="text" value={hex} onChange={(e) => setHex(e.target.value)} className="w-full p-2 bg-white border border-gray-300 rounded font-mono text-gray-800 uppercase text-center font-bold"/>
-                <div className="bg-black p-4 rounded text-center"><div className="w-full h-8 rounded shadow-inner" style={{backgroundColor: hex}}></div><span className="text-[10px] mt-2 block font-bold" style={{color: hex}}>PREVIEW COLOR ON BLACK</span></div>
+                <input type="color" value={hex} onChange={(e) => setHex(e.target.value)} className="w-full h-12 p-1 bg-white border border-gray-300 rounded cursor-pointer" />
+                <input type="text" value={hex} onChange={(e) => setHex(e.target.value)} className="w-full p-2 bg-white border border-gray-300 rounded font-mono text-gray-800 uppercase text-center font-bold" />
+                <div className="bg-black p-4 rounded text-center"><div className="w-full h-8 rounded shadow-inner" style={{ backgroundColor: hex }}></div><span className="text-[10px] mt-2 block font-bold" style={{ color: hex }}>PREVIEW COLOR ON BLACK</span></div>
             </div>
             <div className="bg-gray-200 p-4 border-t border-gray-300 flex justify-end gap-3"><Button variant="secondary" onClick={onClose}>Cancelar</Button><Button onClick={() => onSave(hex)} className="bg-indigo-600 text-white">Guardar</Button></div>
         </div>

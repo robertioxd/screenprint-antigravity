@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { PaletteColor, ProcessingStatus } from '../types';
 import Button from './Button';
 import { hexToRgb } from '../services/imageProcessing';
-import { Plus, Trash2, RefreshCw, Palette, SlidersHorizontal } from 'lucide-react';
+import { Plus, Trash2, RefreshCw, Palette, SlidersHorizontal, GripVertical } from 'lucide-react';
 
 interface PaletteManagerProps {
   palette: PaletteColor[];
@@ -16,6 +16,10 @@ const PaletteManager: React.FC<PaletteManagerProps> = ({ palette, setPalette, on
   const [newColorHex, setNewColorHex] = useState('#000000');
   const [maxColors, setMaxColors] = useState<number>(6);
   const [expandedId, setExpandedId] = useState<string | null>(null);
+
+  // Drag and drop state
+  const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
+  const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
 
   const handleToggleExpand = (id: string) => {
     setExpandedId(prev => prev === id ? null : id);
@@ -67,6 +71,53 @@ const PaletteManager: React.FC<PaletteManagerProps> = ({ palette, setPalette, on
     setPalette(updated);
   };
 
+  // Drag and drop handlers
+  const handleDragStart = (e: React.DragEvent, index: number) => {
+    setDraggedIndex(index);
+    e.dataTransfer.effectAllowed = 'move';
+    // Small delay to allow drag image to render before hiding original
+    setTimeout(() => {
+      if (e.target instanceof HTMLElement) {
+        e.target.style.opacity = '0.5';
+      }
+    }, 0);
+  };
+
+  const handleDragEnter = (e: React.DragEvent, index: number) => {
+    e.preventDefault();
+    setDragOverIndex(index);
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+  };
+
+  const handleDrop = (e: React.DragEvent, targetIndex: number) => {
+    e.preventDefault();
+    if (draggedIndex === null || draggedIndex === targetIndex) {
+      setDragOverIndex(null);
+      return;
+    }
+
+    const newPalette = [...palette];
+    const draggedItem = newPalette[draggedIndex];
+    newPalette.splice(draggedIndex, 1);
+    newPalette.splice(targetIndex, 0, draggedItem);
+    setPalette(newPalette);
+
+    setDraggedIndex(null);
+    setDragOverIndex(null);
+  };
+
+  const handleDragEnd = (e: React.DragEvent) => {
+    if (e.target instanceof HTMLElement) {
+      e.target.style.opacity = '1';
+    }
+    setDraggedIndex(null);
+    setDragOverIndex(null);
+  };
+
   return (
     <div className="bg-gray-800 p-4 rounded-lg border border-gray-700 flex flex-col shadow-inner">
       <div className="flex justify-between items-center mb-4">
@@ -108,9 +159,22 @@ const PaletteManager: React.FC<PaletteManagerProps> = ({ palette, setPalette, on
             No colors detected.
           </div>
         )}
-        {palette.map((color) => (
-          <div key={color.id} className="bg-gray-750 rounded border border-gray-600">
-            <div className="flex items-center gap-2 p-1.5">
+        {palette.map((color, index) => (
+          <div
+            key={color.id}
+            draggable
+            onDragStart={(e) => handleDragStart(e, index)}
+            onDragEnter={(e) => handleDragEnter(e, index)}
+            onDragOver={handleDragOver}
+            onDrop={(e) => handleDrop(e, index)}
+            onDragEnd={handleDragEnd}
+            className={`rounded border transition-all ${dragOverIndex === index ? 'border-blue-500 bg-blue-900/30' : 'border-gray-600 bg-gray-750'
+              } ${draggedIndex === index ? 'opacity-50 border-dashed' : ''}`}
+          >
+            <div className="flex items-center gap-2 p-1.5 list-none">
+              <div className="cursor-grab active:cursor-grabbing text-gray-500 hover:text-white px-1 -ml-1 flex items-center justify-center shrink-0">
+                <GripVertical className="w-4 h-4" />
+              </div>
               <div
                 className="w-6 h-6 rounded border border-gray-500 shadow-sm shrink-0"
                 style={{ backgroundColor: color.hex }}
@@ -134,7 +198,7 @@ const PaletteManager: React.FC<PaletteManagerProps> = ({ palette, setPalette, on
               )}
               <button
                 onClick={() => handleRemove(color.id)}
-                className="text-gray-500 hover:text-red-400 p-1 transition-colors"
+                className="text-gray-500 hover:text-red-400 p-1 transition-colors ml-1"
               >
                 <Trash2 className="w-3 h-3" />
               </button>
