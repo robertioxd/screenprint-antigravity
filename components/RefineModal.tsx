@@ -11,16 +11,20 @@ interface RefineModalProps {
 }
 
 export interface RefineParams {
+    chokeSpread: number;
     cleanupStrength: number;
-    smoothEdges: number;
+    fillHoles: number;
     despeckleArea: number;
+    smoothEdges: number;
 }
 
 const RefineModal: React.FC<RefineModalProps> = ({ layer, onClose, onApply }) => {
     const [params, setParams] = useState<RefineParams>({
-        cleanupStrength: 3,
-        smoothEdges: 0,
+        chokeSpread: 0,
+        cleanupStrength: 0,
+        fillHoles: 0,
         despeckleArea: 50,
+        smoothEdges: 0,
     });
     const [isProcessing, setIsProcessing] = useState(false);
 
@@ -66,21 +70,58 @@ const RefineModal: React.FC<RefineModalProps> = ({ layer, onClose, onApply }) =>
 
                 {/* Sliders */}
                 <div className="px-5 py-5 space-y-5">
-                    {/* Cleanup Strength */}
+                    {/* Limpieza Inteligente */}
                     <div className="space-y-2">
                         <div className="flex items-center justify-between">
                             <label className="text-xs text-gray-300 font-bold uppercase tracking-wider flex items-center gap-2">
-                                <Eraser className="w-3.5 h-3.5 text-blue-400" /> Limpieza Morfológica
+                                <Sparkles className="w-3.5 h-3.5 text-blue-400" /> Limpieza Inteligente
                             </label>
                             <span className="text-blue-400 font-mono text-xs font-bold">{params.cleanupStrength}</span>
                         </div>
                         <input
-                            type="range" min="0" max="10" step="1"
+                            type="range" min="0" max="30" step="1"
                             value={params.cleanupStrength}
                             onChange={(e) => update('cleanupStrength', parseInt(e.target.value))}
                             className="w-full h-1.5 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-blue-500"
                         />
-                        <p className="text-[10px] text-gray-500">Operación Open/Close con kernel elíptico. Remueve píxeles aislados.</p>
+                        <p className="text-[10px] text-gray-500">Operación Open/Close conservando densidad. Borra ruido fino sin engrosar.</p>
+                    </div>
+
+                    {/* Choke / Spread */}
+                    <div className="space-y-2">
+                        <div className="flex items-center justify-between">
+                            <label className="text-xs text-gray-300 font-bold uppercase tracking-wider flex items-center gap-2">
+                                <Eraser className="w-3.5 h-3.5 text-blue-400" /> Grosor de Tinta
+                            </label>
+                            <span className="text-blue-400 font-mono text-xs font-bold">{params.chokeSpread > 0 ? '+' : ''}{params.chokeSpread}</span>
+                        </div>
+                        <input
+                            type="range" min="-15" max="15" step="1"
+                            value={params.chokeSpread}
+                            onChange={(e) => update('chokeSpread', parseInt(e.target.value))}
+                            className="w-full h-1.5 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-blue-500"
+                        />
+                        <div className="flex justify-between w-full px-1">
+                            <span className="text-[9px] text-gray-500 uppercase">Reducir (Choke)</span>
+                            <span className="text-[9px] text-gray-500 uppercase">Engrosar (Spread)</span>
+                        </div>
+                    </div>
+
+                    {/* Fill Holes */}
+                    <div className="space-y-2">
+                        <div className="flex items-center justify-between">
+                            <label className="text-xs text-gray-300 font-bold uppercase tracking-wider flex items-center gap-2">
+                                <Target className="w-3.5 h-3.5 text-purple-400" /> Rellenar Huecos
+                            </label>
+                            <span className="text-purple-400 font-mono text-xs font-bold">{params.fillHoles}</span>
+                        </div>
+                        <input
+                            type="range" min="0" max="30" step="1"
+                            value={params.fillHoles}
+                            onChange={(e) => update('fillHoles', parseInt(e.target.value))}
+                            className="w-full h-1.5 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-purple-500"
+                        />
+                        <p className="text-[10px] text-gray-500">Cierra huecos y líneas rotas. Útil antes del Despeckle.</p>
                     </div>
 
                     {/* Despeckle Area */}
@@ -109,7 +150,7 @@ const RefineModal: React.FC<RefineModalProps> = ({ layer, onClose, onApply }) =>
                             <span className="text-emerald-400 font-mono text-xs font-bold">{params.smoothEdges}</span>
                         </div>
                         <input
-                            type="range" min="0" max="5" step="0.5"
+                            type="range" min="0" max="15" step="1"
                             value={params.smoothEdges}
                             onChange={(e) => update('smoothEdges', parseFloat(e.target.value))}
                             className="w-full h-1.5 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-emerald-500"

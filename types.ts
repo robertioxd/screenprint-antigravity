@@ -92,7 +92,7 @@ export const DEFAULT_CONFIG: AdvancedConfig = {
   substrateColorHex: '#ffffff',
   substrateThreshold: 50,
 
-  cleanupStrength: 1,
+  cleanupStrength: 3,
   smoothEdges: 0,
   minCoverage: 0.2,
 

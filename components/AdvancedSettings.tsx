@@ -281,10 +281,10 @@ const AdvancedSettings: React.FC<AdvancedSettingsProps> = ({ config, onChange, i
             <div className="space-y-1">
               <div className="flex justify-between text-gray-400">
                 <span className="flex items-center gap-1"><Sparkles className="w-3 h-3 text-yellow-400" /> Limpieza Inteligente</span>
-                <span className="text-blue-400 font-mono">{config.cleanupStrength}/10</span>
+                <span className="text-blue-400 font-mono">{config.cleanupStrength}/30</span>
               </div>
               <input
-                type="range" min="0" max="10" step="1"
+                type="range" min="0" max="30" step="1"
                 value={config.cleanupStrength}
                 onChange={(e) => updateField('cleanupStrength', parseInt(e.target.value))}
                 className="w-full h-1 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-blue-500"
@@ -296,10 +296,10 @@ const AdvancedSettings: React.FC<AdvancedSettingsProps> = ({ config, onChange, i
             <div className="space-y-1">
               <div className="flex justify-between text-gray-400">
                 <span className="flex items-center gap-1"><Feather className="w-3 h-3 text-purple-400" /> Suavizado Bordes</span>
-                <span className="text-blue-400 font-mono">{config.smoothEdges}/5</span>
+                <span className="text-blue-400 font-mono">{config.smoothEdges}/15</span>
               </div>
               <input
-                type="range" min="0" max="5" step="1"
+                type="range" min="0" max="15" step="1"
                 value={config.smoothEdges}
                 onChange={(e) => updateField('smoothEdges', parseInt(e.target.value))}
                 className="w-full h-1 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-blue-500"

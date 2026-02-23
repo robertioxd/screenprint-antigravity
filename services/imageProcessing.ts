@@ -245,9 +245,10 @@ def separate_colors_py(image_data, width, height, palette_hex_list, kl, kc, kh, 
             # FIX 1: Size-aware cleanup with connected component area filtering
             # Preserves small details like ® symbols while removing noise
             if cleanup_strength > 0:
+                c_str = cleanup_strength / 3.0
                 scale_factor = max(1.0, (width * height) / 2000000.0)
                 # Pass 1: Small fixed kernel for micro-noise (capped at 7x7 max)
-                morph_k = min(3 + (int(cleanup_strength) // 4) * 2, 7)
+                morph_k = min(3 + (int(c_str) // 4) * 2, 7)
                 if morph_k % 2 == 0:
                     morph_k += 1  # Must be odd
                 kernel_small = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (morph_k, morph_k))
@@ -256,8 +257,8 @@ def separate_colors_py(image_data, width, height, palette_hex_list, kl, kc, kh, 
 
                 # Pass 2: Connected component area filter
                 # Removes isolated noise blobs but keeps coherent shapes (® symbols, thin strokes)
-                if cleanup_strength >= 2:
-                    min_area = int(cleanup_strength * cleanup_strength * scale_factor * 2)
+                if c_str >= 2:
+                    min_area = int(c_str * c_str * scale_factor * 2)
                     num_labels, labels_cc, stats, _ = cv2.connectedComponentsWithStats(alpha_channel, connectivity=8)
                     for j in range(1, num_labels):
                         if stats[j, cv2.CC_STAT_AREA] < min_area:
@@ -265,7 +266,8 @@ def separate_colors_py(image_data, width, height, palette_hex_list, kl, kc, kh, 
 
             # General Smoothing (Soft Edges)
             if smooth_edges > 0:
-                k_size = int(smooth_edges * 2) * 2 + 1 # Must be odd
+                s_edg = smooth_edges / 3.0
+                k_size = int(s_edg * 2) * 2 + 1 # Must be odd
                 alpha_channel = cv2.GaussianBlur(alpha_channel, (k_size, k_size), 0)
 
             layer_out = np.zeros((height, width, 4), dtype=np.uint8)
@@ -366,22 +368,43 @@ def generate_composite_py(layers_list, colors_hex, width, height, alpha):
     rgba = cv2.cvtColor(composite_final, cv2.COLOR_RGB2RGBA)
     return rgba.flatten()
 
-def refine_single_layer_py(layer_data, width, height, cleanup_strength, smooth_edges, despeckle_area):
+def refine_single_layer_py(layer_data, width, height, choke_spread, cleanup_strength, fill_holes, despeckle_area, smooth_edges):
     """Post-separation cleanup for a single layer using OpenCV.
     This allows per-channel noise removal without affecting other channels."""
     arr = np.array(layer_data.to_py(), dtype=np.uint8).reshape(height, width, 4)
     alpha_channel = arr[:, :, 3].copy()
 
-    # 1. Morphological Open/Close (removes salt-and-pepper noise)
-    if cleanup_strength > 0:
-        morph_k = min(3 + (int(cleanup_strength) // 3) * 2, 9)
+    # Scale the UI sliders down by a factor of 3 for more granular fine-tuning
+    choke_spread_v = choke_spread / 3.0
+    cleanup_strength_v = cleanup_strength / 3.0
+    fill_holes_v = fill_holes / 3.0
+    smooth_edges_v = smooth_edges / 3.0
+
+    # 1. Limpieza Inteligente (Morphological Open/Close) - restored
+    if cleanup_strength_v > 0:
+        morph_k = min(3 + (int(cleanup_strength_v) // 3) * 2, 9)
         if morph_k % 2 == 0:
             morph_k += 1
-        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (morph_k, morph_k))
-        alpha_channel = cv2.morphologyEx(alpha_channel, cv2.MORPH_OPEN, kernel)
-        alpha_channel = cv2.morphologyEx(alpha_channel, cv2.MORPH_CLOSE, kernel)
+        kernel_s = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (morph_k, morph_k))
+        alpha_channel = cv2.morphologyEx(alpha_channel, cv2.MORPH_OPEN, kernel_s)
+        alpha_channel = cv2.morphologyEx(alpha_channel, cv2.MORPH_CLOSE, kernel_s)
 
-    # 2. Connected Component Despeckle (remove small isolated blobs)
+    # 2. Choke/Spread (Erosion / Dilation)
+    if int(choke_spread_v) != 0:
+        kernel_size = abs(int(choke_spread_v)) * 2 + 1
+        kernel_cs = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (kernel_size, kernel_size))
+        if choke_spread_v > 0:
+            alpha_channel = cv2.dilate(alpha_channel, kernel_cs, iterations=1)
+        else:
+            alpha_channel = cv2.erode(alpha_channel, kernel_cs, iterations=1)
+
+    # 3. Fill Holes (Morphological Close)
+    if fill_holes_v > 0:
+        close_k = (int(fill_holes_v) * 2) + 1
+        kernel_close = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (close_k, close_k))
+        alpha_channel = cv2.morphologyEx(alpha_channel, cv2.MORPH_CLOSE, kernel_close)
+
+    # 4. Connected Component Despeckle (remove small isolated blobs)
     if despeckle_area > 0:
         # Threshold to binary for CC analysis
         _, binary = cv2.threshold(alpha_channel, 1, 255, cv2.THRESH_BINARY)
@@ -390,10 +413,10 @@ def refine_single_layer_py(layer_data, width, height, cleanup_strength, smooth_e
             if stats[j, cv2.CC_STAT_AREA] < int(despeckle_area):
                 alpha_channel[labels_cc == j] = 0
 
-    # 3. Gaussian Edge Smoothing
-    if smooth_edges > 0:
-        k_size = int(smooth_edges * 2) * 2 + 1
-        alpha_channel = cv2.GaussianBlur(alpha_channel, (k_size, k_size), 0)
+    # 5. Gaussian Edge Smoothing
+    if smooth_edges_v > 0:
+        k_size_e = int(smooth_edges_v * 2) * 2 + 1
+        alpha_channel = cv2.GaussianBlur(alpha_channel, (k_size_e, k_size_e), 0)
 
     # Rebuild the layer output
     out = np.zeros((height, width, 4), dtype=np.uint8)
@@ -542,14 +565,14 @@ export const generateComposite = async (layers: Layer[], width: number, height: 
 
 export const refineSingleLayer = async (
     layerData: ImageData,
-    params: { cleanupStrength: number; smoothEdges: number; despeckleArea: number }
+    params: { chokeSpread: number; cleanupStrength: number; fillHoles: number; despeckleArea: number; smoothEdges: number }
 ): Promise<ImageData> => {
     if (!pyodide) throw new Error("Pyodide not initialized");
     const { width, height, data } = layerData;
     const refinePy = pyodide.globals.get('refine_single_layer_py');
     const resultProxy = await refinePy(
         data, width, height,
-        params.cleanupStrength, params.smoothEdges, params.despeckleArea
+        params.chokeSpread, params.cleanupStrength, params.fillHoles, params.despeckleArea, params.smoothEdges
     );
     const resultArray = resultProxy.toJs();
     resultProxy.destroy();
