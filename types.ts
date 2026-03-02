@@ -9,10 +9,13 @@ export interface PaletteColor {
   hex: string;
   rgb: RGB;
   locked?: boolean;
-  // Per-channel gradient range (Raster mode only)
+  isUnderbase?: boolean;  // If true, this color acts as the underbase (white ink layer)
+  useGradient?: boolean;  // If true, uses SoftColor1-style pure proximity ramp (no exclusivity)
+  // Per-channel gradient range (Raster mode only, requires useGradient=true)
   gradientMin?: number;  // 0-100: Distance where ink is 100% solid
   gradientMax?: number;  // 0-200: Distance where ink fades to 0%
   gamma?: number;        // 0.1-3.0: Per-channel gamma curve
+  halftoneAngle?: number; // Per-channel halftone angle (degrees) to prevent moiré
 }
 
 export interface Layer {
@@ -47,6 +50,7 @@ export interface AdvancedConfig {
 
   // Raster Specific
   useRasterAdaptive: boolean;
+  useSuperSampling: boolean; // 2x upscale before separation for better edge quality
 
   // Substrate Knockout
   useSubstrateKnockout: boolean;
@@ -64,6 +68,9 @@ export interface AdvancedConfig {
   halftoneAngle: number;
   // Gamma adjustment for soft separation
   gamma: number;
+
+  // Underbase
+  underbaseChoke: number; // 0-5px: Erosion of the underbase mask to prevent white edges
 }
 
 export const DEFAULT_CONFIG: AdvancedConfig = {
@@ -87,6 +94,7 @@ export const DEFAULT_CONFIG: AdvancedConfig = {
   vectorAAThreshold: 127,
 
   useRasterAdaptive: true,
+  useSuperSampling: false,
 
   useSubstrateKnockout: false,
   substrateColorHex: '#ffffff',
@@ -99,7 +107,9 @@ export const DEFAULT_CONFIG: AdvancedConfig = {
   halftoneType: 'am',
   halftoneLpi: 45,
   halftoneAngle: 22.5,
-  gamma: 1.25
+  gamma: 1.25,
+
+  underbaseChoke: 1
 };
 
 export enum ProcessingStatus {

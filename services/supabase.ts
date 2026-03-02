@@ -156,3 +156,59 @@ export async function analyzeWithAI(
         return null;
     }
 }
+
+// ==========================================
+// HIGH-RES SERVER-SIDE RENDERING API
+// ==========================================
+
+export interface HiResRenderResult {
+    imageBase64: string;
+    width: number;
+    height: number;
+    effectiveDpi: number;
+    pixelCount: number;
+}
+
+/**
+ * Sends a PDF/AI file to the server for high-resolution rasterization.
+ * Bypasses browser canvas limitations for maximum separation quality.
+ */
+export async function renderHiRes(
+    fileBase64: string,
+    dpi: number = 300,
+    maxWidth: number = 6000
+): Promise<HiResRenderResult | null> {
+    if (!supabase) {
+        console.warn('[Supabase] Client not initialized. Using client-side rendering.');
+        return null;
+    }
+
+    try {
+        console.log(`[HiRes Render] Requesting server-side render at ${dpi} DPI...`);
+
+        const { data, error } = await supabase.functions.invoke('render-hires', {
+            body: {
+                fileBase64,
+                dpi,
+                maxWidth,
+            },
+        });
+
+        if (error) {
+            console.warn('[HiRes Render] Edge Function error:', error.message);
+            return null;
+        }
+
+        if (data?.error) {
+            console.warn('[HiRes Render] Server error:', data.error);
+            return null;
+        }
+
+        console.log(`[HiRes Render] Success: ${data.width}x${data.height} at ${data.effectiveDpi} DPI`);
+        return data as HiResRenderResult;
+    } catch (err) {
+        console.warn('[HiRes Render] Falling back to client-side:', err);
+        return null;
+    }
+}
+

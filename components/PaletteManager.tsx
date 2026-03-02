@@ -1,8 +1,9 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { PaletteColor, ProcessingStatus } from '../types';
 import Button from './Button';
 import { hexToRgb } from '../services/imageProcessing';
-import { Plus, Trash2, RefreshCw, Palette, SlidersHorizontal, GripVertical } from 'lucide-react';
+import { findClosestPantone } from '../services/pantoneMatcher';
+import { Plus, Trash2, RefreshCw, Palette, SlidersHorizontal, GripVertical, Layers, Waves } from 'lucide-react';
 
 interface PaletteManagerProps {
   palette: PaletteColor[];
@@ -54,6 +55,25 @@ const PaletteManager: React.FC<PaletteManagerProps> = ({ palette, setPalette, on
     const updated = palette.map(c => {
       if (c.id === id) {
         return { ...c, [field]: value };
+      }
+      return c;
+    });
+    setPalette(updated);
+  };
+
+  const handleToggleUnderbase = (id: string) => {
+    const updated = palette.map(c => ({
+      ...c,
+      // Only the selected ID becomes the underbase; clear it for others
+      isUnderbase: c.id === id ? !c.isUnderbase : false
+    }));
+    setPalette(updated);
+  };
+
+  const handleToggleGradient = (id: string) => {
+    const updated = palette.map(c => {
+      if (c.id === id) {
+        return { ...c, useGradient: !c.useGradient };
       }
       return c;
     });
@@ -176,17 +196,59 @@ const PaletteManager: React.FC<PaletteManagerProps> = ({ palette, setPalette, on
                 <GripVertical className="w-4 h-4" />
               </div>
               <div
-                className="w-6 h-6 rounded border border-gray-500 shadow-sm shrink-0"
+                className="w-6 h-6 rounded border border-gray-500 shadow-sm shrink-0 relative"
                 style={{ backgroundColor: color.hex }}
-              ></div>
-              <div className="flex-1">
+              >
+                {color.isUnderbase && (
+                  <div className="absolute -top-1 -right-1 bg-blue-500 rounded-full p-0.5 shadow-sm border border-gray-800">
+                    <Layers className="w-2 h-2 text-white" />
+                  </div>
+                )}
+                {color.useGradient && (
+                  <div className="absolute -bottom-1 -right-1 bg-purple-500 rounded-full p-0.5 shadow-sm border border-gray-800">
+                    <Waves className="w-2 h-2 text-white" />
+                  </div>
+                )}
+              </div>
+              <div className="flex-1 flex flex-col justify-center">
                 <input
                   type="text"
                   value={color.hex}
                   onChange={(e) => handleUpdateHex(color.id, e.target.value)}
                   className="bg-transparent text-[11px] font-mono text-gray-200 focus:outline-none w-full uppercase"
                 />
+                {(() => {
+                  const { match, deltaE } = findClosestPantone(color.hex);
+                  let accuracyLabel = "Buena";
+                  let accuracyColor = "text-yellow-500/80";
+
+                  if (deltaE <= 2.0) {
+                    accuracyLabel = "Exacta";
+                    accuracyColor = "text-green-400/90";
+                  } else if (deltaE > 5.0) {
+                    accuracyLabel = "Aprox.";
+                    accuracyColor = "text-orange-400/80";
+                  }
+
+                  return (
+                    <div className="flex items-center gap-1 mt-0.5">
+                      <span title="Pantone Solid Coated" className="text-[9px] font-bold text-gray-400 uppercase tracking-wider bg-gray-800 px-1 py-0.5 rounded border border-gray-600 truncate max-w-[100px]">
+                        {match.name}
+                      </span>
+                      <span title={`Precisión (Delta E 2000: ${deltaE.toFixed(2)})`} className={`text-[8px] font-bold uppercase ${accuracyColor} whitespace-nowrap`}>
+                        {accuracyLabel}
+                      </span>
+                    </div>
+                  );
+                })()}
               </div>
+              <button
+                onClick={() => handleToggleUnderbase(color.id)}
+                className={`p-1 transition-colors rounded ${color.isUnderbase ? 'text-blue-400 bg-gray-700 border border-blue-500/30' : 'text-gray-500 hover:text-blue-400'}`}
+                title={color.isUnderbase ? "Eliminar como Underbase" : "Establecer como Underbase (Base Blanca)"}
+              >
+                <Layers className="w-3 h-3" />
+              </button>
               {separationType === 'raster' && (
                 <button
                   onClick={() => handleToggleExpand(color.id)}
@@ -207,54 +269,82 @@ const PaletteManager: React.FC<PaletteManagerProps> = ({ palette, setPalette, on
             {/* Per-channel gradient controls (Raster only) */}
             {separationType === 'raster' && expandedId === color.id && (
               <div className="px-3 pb-3 pt-1 border-t border-gray-700 space-y-2 animate-in slide-in-from-top-1 duration-150">
-                <div className="flex justify-between items-center mb-1">
-                  <span className="text-[9px] text-gray-500 font-bold uppercase">Gradient Overrides</span>
-                  {(color.gradientMin !== undefined || color.gradientMax !== undefined || color.gamma !== undefined) && (
-                    <button
-                      onClick={() => handleClearGradient(color.id)}
-                      className="text-[9px] text-red-400 hover:text-red-300 uppercase font-bold"
-                    >Reset Auto</button>
-                  )}
+                {/* Solid / Gradient Mode Switch */}
+                <div className="flex items-center gap-1 mb-2">
+                  <button
+                    onClick={() => { if (color.useGradient) handleToggleGradient(color.id); }}
+                    className={`flex-1 flex items-center justify-center gap-1 py-1.5 rounded text-[10px] font-bold uppercase transition-all ${!color.useGradient ? 'bg-gray-600 text-white shadow-sm' : 'text-gray-500 hover:bg-gray-700'}`}
+                  >
+                    ■ Sólido
+                  </button>
+                  <button
+                    onClick={() => { if (!color.useGradient) handleToggleGradient(color.id); }}
+                    className={`flex-1 flex items-center justify-center gap-1 py-1.5 rounded text-[10px] font-bold uppercase transition-all ${color.useGradient ? 'bg-purple-600 text-white shadow-sm' : 'text-gray-500 hover:bg-gray-700'}`}
+                  >
+                    <Waves className="w-3 h-3" /> Gradiente
+                  </button>
                 </div>
-                <div className="space-y-1">
-                  <div className="flex justify-between text-gray-400">
-                    <span className="text-[10px]">Solidez (Min)</span>
-                    <span className="text-blue-400 font-mono text-[10px]">{color.gradientMin ?? 'Auto'}</span>
-                  </div>
-                  <input
-                    type="range" min="0" max="100" step="1"
-                    value={color.gradientMin ?? 0}
-                    onChange={(e) => handleUpdateGradient(color.id, 'gradientMin', parseInt(e.target.value))}
-                    className="w-full h-1 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-blue-500"
-                    title="Distance where ink is 100% solid"
-                  />
-                </div>
-                <div className="space-y-1">
-                  <div className="flex justify-between text-gray-400">
-                    <span className="text-[10px]">Alcance (Max)</span>
-                    <span className="text-blue-400 font-mono text-[10px]">{color.gradientMax ?? 'Auto'}</span>
-                  </div>
-                  <input
-                    type="range" min="5" max="200" step="1"
-                    value={color.gradientMax ?? 60}
-                    onChange={(e) => handleUpdateGradient(color.id, 'gradientMax', parseInt(e.target.value))}
-                    className="w-full h-1 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-blue-500"
-                    title="Distance where ink fades to 0%"
-                  />
-                </div>
-                <div className="space-y-1">
-                  <div className="flex justify-between text-gray-400">
-                    <span className="text-[10px]">Gamma</span>
-                    <span className="text-blue-400 font-mono text-[10px]">{(color.gamma ?? 1.25).toFixed(2)}</span>
-                  </div>
-                  <input
-                    type="range" min="0.1" max="3.0" step="0.05"
-                    value={color.gamma ?? 1.25}
-                    onChange={(e) => handleUpdateGradient(color.id, 'gamma', parseFloat(e.target.value))}
-                    className="w-full h-1 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-blue-500"
-                    title="Gamma curve for this channel"
-                  />
-                </div>
+
+                {/* Gradient sliders — only visible when useGradient is true */}
+                {color.useGradient && (
+                  <>
+                    <div className="flex justify-between items-center mb-1">
+                      <span className="text-[9px] text-gray-500 font-bold uppercase">Rango de Captura</span>
+                      {(color.gradientMin !== undefined || color.gradientMax !== undefined || color.gamma !== undefined) && (
+                        <button
+                          onClick={() => handleClearGradient(color.id)}
+                          className="text-[9px] text-red-400 hover:text-red-300 uppercase font-bold"
+                        >Reset Auto</button>
+                      )}
+                    </div>
+                    <div className="space-y-1">
+                      <div className="flex justify-between text-gray-400">
+                        <span className="text-[10px]">Solidez (Min)</span>
+                        <span className="text-purple-400 font-mono text-[10px]">{color.gradientMin ?? 'Auto'}</span>
+                      </div>
+                      <input
+                        type="range" min="0" max="100" step="1"
+                        value={color.gradientMin ?? 10}
+                        onChange={(e) => handleUpdateGradient(color.id, 'gradientMin', parseInt(e.target.value))}
+                        className="w-full h-1 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-purple-500"
+                        title="Distancia donde la tinta es 100% sólida"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <div className="flex justify-between text-gray-400">
+                        <span className="text-[10px]">Alcance (Max)</span>
+                        <span className="text-purple-400 font-mono text-[10px]">{color.gradientMax ?? 'Auto'}</span>
+                      </div>
+                      <input
+                        type="range" min="5" max="200" step="1"
+                        value={color.gradientMax ?? 110}
+                        onChange={(e) => handleUpdateGradient(color.id, 'gradientMax', parseInt(e.target.value))}
+                        className="w-full h-1 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-purple-500"
+                        title="Distancia donde la tinta desaparece (0% opacidad)"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <div className="flex justify-between text-gray-400">
+                        <span className="text-[10px]">Gamma</span>
+                        <span className="text-purple-400 font-mono text-[10px]">{(color.gamma ?? 1.25).toFixed(2)}</span>
+                      </div>
+                      <input
+                        type="range" min="0.1" max="3.0" step="0.05"
+                        value={color.gamma ?? 1.25}
+                        onChange={(e) => handleUpdateGradient(color.id, 'gamma', parseFloat(e.target.value))}
+                        className="w-full h-1 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-purple-500"
+                        title="Ganancia de la curva del gradiente"
+                      />
+                    </div>
+                  </>
+                )}
+
+                {/* Info text when solid mode */}
+                {!color.useGradient && (
+                  <p className="text-[9px] text-gray-500 italic text-center py-1">
+                    Modo Sólido: este color se asigna como ganador absoluto (sin degradado).
+                  </p>
+                )}
               </div>
             )}
           </div>

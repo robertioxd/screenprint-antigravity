@@ -18,6 +18,7 @@ import { analyzePalette, performSeparation, applyHalftone, initEngine, generateC
 import { downloadComposite, downloadChannelsZip } from './services/exportService';
 import { analyzeWithAI, AIAnalysisResult, supabase, saveTrainingData } from './services/supabase';
 import { exportLayersAsEPS } from './services/zipExport';
+import { generateUnderbaseLayer } from './services/underbaseGenerator';
 import { User } from '@supabase/supabase-js';
 import { AuthModal } from './components/Auth/AuthModal';
 import { UserMenu } from './components/Auth/UserMenu';
@@ -195,7 +196,20 @@ const App: React.FC = () => {
             setStatus(ProcessingStatus.SEPARATING);
             await new Promise(r => setTimeout(r, 50));
 
-            const result = await performSeparation(workingImage, palette, advancedConfig);
+            let result = await performSeparation(workingImage, palette, advancedConfig);
+
+            // Generate underbase if requested in the palette
+            if (palette.some(p => p.isUnderbase)) {
+                const underbaseLayer = generateUnderbaseLayer(
+                    result,
+                    advancedConfig.underbaseChoke,
+                    workingImage.width,
+                    workingImage.height
+                );
+                // Prepend underbase to the layer stack (Layer 0, printed first)
+                result = [underbaseLayer, ...result];
+            }
+
             initializeLayerHistory(result);
 
             setStatus(ProcessingStatus.COMPOSITING);
@@ -218,8 +232,18 @@ const App: React.FC = () => {
         try {
             await new Promise(r => setTimeout(r, 50));
             const halftonedLayers: Layer[] = [];
-            for (const layer of layers) {
-                const htData = await applyHalftone(layer.data, advancedConfig);
+            // Standard angle offsets to prevent moiré (distribute evenly across 180°)
+            const defaultAngles = layers.map((_, i) => {
+                const step = 180 / layers.length;
+                return (i * step + 22.5) % 180; // Start at 22.5° offset
+            });
+            for (let idx = 0; idx < layers.length; idx++) {
+                const layer = layers[idx];
+                // Per-channel angle: use palette override, auto-distributed default, or global config fallback
+                const channelAngle = layer.color.halftoneAngle !== undefined
+                    ? layer.color.halftoneAngle
+                    : defaultAngles[idx];
+                const htData = await applyHalftone(layer.data, advancedConfig, channelAngle);
                 halftonedLayers.push({ ...layer, data: htData });
             }
             updateLayersWithHistory(halftonedLayers);
@@ -718,7 +742,7 @@ const App: React.FC = () => {
                                         </div>
                                         {/* EXPORT EPS BUTTON */}
                                         <button
-                                            onClick={() => exportLayersAsEPS(layers, advancedConfig, 'screenprint')}
+                                            onClick={() => exportLayersAsEPS(layers, advancedConfig, 'screenprint', compositeImage)}
                                             disabled={layers.length === 0}
                                             className="flex items-center gap-2 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 disabled:from-gray-700 disabled:to-gray-700 disabled:text-gray-500 text-white text-[10px] font-bold uppercase tracking-wider px-3 py-1.5 rounded-full border border-emerald-500/30 disabled:border-gray-600 transition-all duration-300 shadow-lg shadow-emerald-500/20 disabled:shadow-none"
                                             title="Export all layers as EPS files in a ZIP archive (for I-Image CTS)"

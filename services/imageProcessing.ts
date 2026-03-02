@@ -52,18 +52,24 @@ def analyze_palette_py(image_data, width, height, k, sample_size):
     else:
         sample = valid_pixels
 
-    # OpenCV K-Means (Much faster and robust than manual numpy implementation)
-    sample_float = np.float32(sample)
+    # CIELAB K-Means: Cluster in perceptually uniform CIELAB space
+    # This prevents RGB-space artifacts (e.g., merging visually distinct dark blues)
+    sample_lab = cv2.cvtColor(sample.reshape(-1, 1, 3), cv2.COLOR_RGB2Lab).reshape(-1, 3)
+    sample_float = np.float32(sample_lab)
     criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 10, 1.0)
     flags = cv2.KMEANS_PP_CENTERS # K-Means++ initialization
     compactness, labels, centers = cv2.kmeans(sample_float, int(k), None, criteria, 10, flags)
     
-    # Sort centroids by frequency (simulated)
-    # OpenCV kmeans doesn't return counts, so we do a quick count on labels
+    # Convert LAB centroids back to RGB
+    # centers are in OpenCV's 8-bit LAB format (L:0-255, a:0-255, b:0-255)
+    centers_uint8 = np.clip(centers, 0, 255).astype(np.uint8).reshape(1, -1, 3)
+    centers_rgb = cv2.cvtColor(centers_uint8, cv2.COLOR_Lab2RGB).reshape(-1, 3)
+    
+    # Sort centroids by frequency
     labels = labels.flatten()
     counts = np.bincount(labels, minlength=int(k))
     sorted_idx = np.argsort(-counts)
-    sorted_centers = centers[sorted_idx]
+    sorted_centers = centers_rgb[sorted_idx]
     
     hex_colors = []
     for center in sorted_centers:
@@ -72,23 +78,27 @@ def analyze_palette_py(image_data, width, height, k, sample_size):
     
     return hex_colors
 
-def separate_colors_py(image_data, width, height, palette_hex_list, kl, kc, kh, method, sep_type, cleanup_strength, smooth_edges, gamma_val, use_aa, aa_sigma, aa_threshold, use_adaptive, min_coverage, denoise_strength, denoise_spatial, per_channel_min_list, per_channel_max_list, per_channel_gamma_list, use_substrate_knockout, substrate_hex, substrate_threshold):
+def separate_colors_py(image_data, width, height, palette_hex_list, kl, kc, kh, method, sep_type, cleanup_strength, smooth_edges, gamma_val, use_aa, aa_sigma, aa_threshold, use_adaptive, min_coverage, denoise_strength, denoise_spatial, per_channel_min_list, per_channel_max_list, per_channel_gamma_list, use_substrate_knockout, substrate_hex, substrate_threshold, use_gradient_list, use_supersampling):
     # 1. Load Data
     arr = np.array(image_data.to_py(), dtype=np.uint8).reshape(height, width, 4)
     rgb = arr[:, :, :3]
     
     # CRITICAL: Extract Source Alpha Channel for Masking
-    # Normalize alpha to 0.0 - 1.0 range to use as a multiplier later
     source_alpha = arr[:, :, 3].astype(np.float32) / 255.0
+    
+    # Store original dimensions for supersampling downscale
+    orig_width, orig_height = width, height
+    
+    # SuperSampling: 2x upscale for better edge quality
+    if use_supersampling and sep_type == 'raster':
+        rgb = cv2.resize(rgb, (width * 2, height * 2), interpolation=cv2.INTER_CUBIC)
+        source_alpha = cv2.resize(source_alpha, (width * 2, height * 2), interpolation=cv2.INTER_CUBIC)
+        height, width = rgb.shape[:2]
+    
     source_alpha_flat = source_alpha.reshape(-1)
     
     # 2. Pre-processing: Bilateral Filter (OpenCV)
-    # Preserves edges while removing noise. Critical for Simulated Process.
     if denoise_strength > 0:
-        # cv2.bilateralFilter parameters: src, d, sigmaColor, sigmaSpace
-        # d = Diameter of pixel neighborhood. -1 calculates from sigmaSpace.
-        # sigmaColor: Filter sigma in the color space.
-        # sigmaSpace: Filter sigma in the coordinate space.
         rgb = cv2.bilateralFilter(rgb, d=-1, sigmaColor=float(denoise_strength), sigmaSpace=float(denoise_spatial))
 
     # Flatten for separation logic
@@ -106,17 +116,19 @@ def separate_colors_py(image_data, width, height, palette_hex_list, kl, kc, kh, 
     # We stick to skimage for CIEDE2000 because OpenCV lacks a configurable deltaE function in Python bindings.
     # However, we can optimize the Euclidean path using broadcasting.
     
+    palette_float = palette_arr_uint8.astype(np.float32)
+    
     if method == 'ciede2000':
         palette_lab = color.rgb2lab(palette_arr_uint8.reshape(1, -1, 3)).reshape(-1, 3).astype(np.float32)
     elif method == 'lab_euclidean':
         # LAB-Euclidean: faster than CIEDE2000, more perceptually accurate than RGB Euclidean
         palette_lab_cv = cv2.cvtColor(palette_arr_uint8.reshape(1, -1, 3), cv2.COLOR_RGB2Lab).reshape(-1, 3).astype(np.float32)
-    else:
-        palette_float = palette_arr_uint8.astype(np.float32)
 
-    # Adaptive Threshold Logic
+    # Adaptive Threshold Logic: per-color nearest-neighbor slopes
     max_dist = 60.0 
     dist_slope = 30.0
+    # Per-color gradient slopes based on nearest neighbor distance (prevents bleed)
+    per_color_slopes = np.full(len(palette_rgb), 30.0, dtype=np.float32)
     if sep_type == 'raster' and use_adaptive and len(palette_rgb) > 1:
         p_float_est = palette_arr_uint8.astype(np.float32)
         # Vectorized distance matrix for palette
@@ -128,17 +140,27 @@ def separate_colors_py(image_data, width, height, palette_hex_list, kl, kc, kh, 
              avg_nearest = np.mean(min_dists)
              max_dist = np.clip(avg_nearest * 0.7, 25.0, 70.0)
              dist_slope = max_dist * 0.5
+             # Per-color slope: tighter for colors close to neighbors, wider for isolated colors
+             for ci in range(len(palette_rgb)):
+                 nn_dist = min_dists[ci]
+                 per_color_slopes[ci] = np.clip(nn_dist * 0.35, 10.0, 50.0)
 
     # Per-channel gradient overrides
     ch_min_arr = np.array(per_channel_min_list.to_py(), dtype=np.float32) if hasattr(per_channel_min_list, 'to_py') else np.array(per_channel_min_list, dtype=np.float32)
     ch_max_arr = np.array(per_channel_max_list.to_py(), dtype=np.float32) if hasattr(per_channel_max_list, 'to_py') else np.array(per_channel_max_list, dtype=np.float32)
     ch_gamma_arr = np.array(per_channel_gamma_list.to_py(), dtype=np.float32) if hasattr(per_channel_gamma_list, 'to_py') else np.array(per_channel_gamma_list, dtype=np.float32)
 
-    # Substrate knockout preparation
+    # Per-channel gradient toggle
+    use_gradient = np.array(use_gradient_list.to_py(), dtype=bool) if hasattr(use_gradient_list, 'to_py') else np.array(use_gradient_list, dtype=bool)
+
+    # Substrate knockout: precalculate ONCE (not per chunk)
     substrate_rgb = None
+    substrate_mask_flat = None
     if use_substrate_knockout and substrate_hex:
         sh = substrate_hex.lstrip('#')
         substrate_rgb = np.array([int(sh[i:i+2], 16) for i in (0, 2, 4)], dtype=np.float32)
+        sub_dist = np.linalg.norm(pixels_flat.astype(np.float32) - substrate_rgb, axis=1)
+        substrate_mask_flat = np.clip(1.0 - (sub_dist / float(substrate_threshold)), 0.0, 1.0)
 
     num_pixels = pixels_flat.shape[0]
     num_colors = len(palette_rgb)
@@ -174,50 +196,68 @@ def separate_colors_py(image_data, width, height, palette_hex_list, kl, kc, kh, 
             labels = np.argmin(chunk_dists, axis=1)
             for i in range(num_colors):
                 mask = (labels == i)
-                # Apply source alpha to vector selection (if transparent, it's 0)
-                # We use > 0.5 threshold for alpha in vector mode
                 alpha_mask = (chunk_alpha > 0.5)
                 combined_mask = np.logical_and(mask, alpha_mask)
                 layer_raw_values[i, start:end][combined_mask] = 255.0
         else:
-            min_dists = np.min(chunk_dists, axis=1, keepdims=True)
+            # Raster mode: bifurcate per color (gradient vs solid)
+            labels = np.argmin(chunk_dists, axis=1)
+            min_dists_flat = np.min(chunk_dists, axis=1)
+
+            # Precompute RGB distances if gradients are used to align metric boundaries
+            if np.any(use_gradient):
+                chunk_float = chunk_rgb.astype(np.float32)
+                diff_all_rgb = chunk_float[:, np.newaxis, :] - palette_float[np.newaxis, :, :]
+                dists_all_rgb = np.linalg.norm(diff_all_rgb, axis=2)
+                labels_rgb = np.argmin(dists_all_rgb, axis=1)
+                min_dists_rgb = np.min(dists_all_rgb, axis=1)
+
             for i in range(num_colors):
                 raw_d = chunk_dists[:, i]
-                min_d = min_dists[:, 0]
 
-                # Per-channel gradient range (SoftColor1-style linear ramp)
-                ch_min = ch_min_arr[i] if ch_min_arr[i] >= 0 else 0.0
-                ch_max = ch_max_arr[i] if ch_max_arr[i] > 0 else max_dist
-                ch_range = ch_max - ch_min
-                if ch_range < 1.0:
-                    ch_range = 1.0
+                if use_gradient[i]:
+                    # === GRADIENT MODE: RGB Euclidean within CIEDE2000 territory (Option B) ===
+                    target_rgb = palette_float[i]
+                    diff_rgb = chunk_rgb.astype(np.float32) - target_rgb
+                    raw_d_rgb = np.linalg.norm(diff_rgb, axis=1)
 
-                proximity = np.clip(1.0 - (raw_d - ch_min) / ch_range, 0.0, 1.0)
+                    # Defaults for RGB are wider (0-441 range) than CIEDE2000 (0-100)
+                    ch_min = ch_min_arr[i] if ch_min_arr[i] >= 0 else 10.0
+                    ch_max = ch_max_arr[i] if ch_max_arr[i] > 0 else 110.0
+                    ch_range = max(ch_max - ch_min, 1.0)
 
-                dist_diff = raw_d - min_d
-                exclusivity = 1.0 - (dist_diff / dist_slope)
-                np.clip(exclusivity, 0, 1, out=exclusivity)
-                alpha = proximity * exclusivity
+                    alpha = np.clip(1.0 - (raw_d_rgb - ch_min) / ch_range, 0.0, 1.0)
 
-                # Per-channel gamma (fallback to global)
-                g_val = ch_gamma_arr[i] if ch_gamma_arr[i] > 0 else gamma_val
-                if g_val != 1.0:
-                    np.power(alpha, g_val, out=alpha)
+                    # Per-channel gamma (fallback to global)
+                    g_val = ch_gamma_arr[i] if ch_gamma_arr[i] > 0 else gamma_val
+                    if g_val != 1.0:
+                        np.power(alpha, g_val, out=alpha)
+                        
+                    # Soft territory: how much does this color WIN vs its closest rival in RGB space?
+                    # Using RGB distances for both the ramp and the territory ensures 
+                    # the boundaries perfectly match without hard edges.
+                    dist_diff = dists_all_rgb[:, i] - min_dists_rgb
+                    
+                    # Feather Zone: smooth fade at the exact RGB boundary to prevent hard cuts.
+                    # 15 RGB distance units gives a smooth micro-blend at the pixel edge.
+                    feather_zone = 15.0  
+                    territory_soft = np.clip(1.0 - (dist_diff / feather_zone), 0.0, 1.0)
+                    
+                    # The territory_soft formula handles the boundary transition up to feather_zone units outside the boundary.
+                    # Do not multiply by 'labels_rgb == i' here, as that creates a hard boolean cutoff
+                    # which completely nullifies the feathering effect.
+                    alpha = alpha * territory_soft
+                else:
+                    # === SOLID MODE: Winner-takes-all binary assignment ===
+                    alpha = np.where(labels == i, 1.0, 0.0).astype(np.float32)
                 
-                # CRITICAL: Apply Source Alpha Mask
+                # Apply Source Alpha Mask
                 alpha = alpha * chunk_alpha
 
-                # Substrate Knockout: subtract substrate mask from ink
-                if use_substrate_knockout and substrate_rgb is not None:
-                    sub_dist = np.linalg.norm(chunk_rgb.astype(np.float32) - substrate_rgb, axis=1)
-                    sub_mask = np.clip(1.0 - (sub_dist / float(substrate_threshold)), 0.0, 1.0)
-                    alpha = alpha * (1.0 - sub_mask)
+                # Substrate Knockout (precalculated)
+                if substrate_mask_flat is not None:
+                    alpha = alpha * (1.0 - substrate_mask_flat[start:end])
 
-                # Smooth alpha ramp: eliminates aliased dotted edges
-                # Values below 0.02 are killed, values 0.02-0.08 get a smooth fade
-                alpha = np.where(alpha < 0.02, 0.0, alpha)
-                smooth_zone = (alpha >= 0.02) & (alpha < 0.08)
-                alpha[smooth_zone] = alpha[smooth_zone] * (alpha[smooth_zone] / 0.08)
                 layer_raw_values[i, start:end] = alpha * 255.0
 
     gc.collect()
@@ -237,26 +277,22 @@ def separate_colors_py(image_data, width, height, palette_hex_list, kl, kc, kh, 
                  continue
 
         if np.any(alpha_channel):
-            # FIX 2: Vector Anti-Aliasing BEFORE cleanup (smooths classification noise first)
+            # FIX 2: Vector Anti-Aliasing BEFORE cleanup
             if sep_type == 'vector' and use_aa:
                 blurred = cv2.GaussianBlur(alpha_channel, (0, 0), sigmaX=float(aa_sigma))
                 _, alpha_channel = cv2.threshold(blurred, int(aa_threshold), 255, cv2.THRESH_BINARY)
 
             # FIX 1: Size-aware cleanup with connected component area filtering
-            # Preserves small details like ® symbols while removing noise
             if cleanup_strength > 0:
                 c_str = cleanup_strength / 3.0
                 scale_factor = max(1.0, (width * height) / 2000000.0)
-                # Pass 1: Small fixed kernel for micro-noise (capped at 7x7 max)
                 morph_k = min(3 + (int(c_str) // 4) * 2, 7)
                 if morph_k % 2 == 0:
-                    morph_k += 1  # Must be odd
+                    morph_k += 1
                 kernel_small = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (morph_k, morph_k))
                 alpha_channel = cv2.morphologyEx(alpha_channel, cv2.MORPH_OPEN, kernel_small)
                 alpha_channel = cv2.morphologyEx(alpha_channel, cv2.MORPH_CLOSE, kernel_small)
 
-                # Pass 2: Connected component area filter
-                # Removes isolated noise blobs but keeps coherent shapes (® symbols, thin strokes)
                 if c_str >= 2:
                     min_area = int(c_str * c_str * scale_factor * 2)
                     num_labels, labels_cc, stats, _ = cv2.connectedComponentsWithStats(alpha_channel, connectivity=8)
@@ -264,13 +300,26 @@ def separate_colors_py(image_data, width, height, palette_hex_list, kl, kc, kh, 
                         if stats[j, cv2.CC_STAT_AREA] < min_area:
                             alpha_channel[labels_cc == j] = 0
 
-            # General Smoothing (Soft Edges)
+            # General Smoothing (Soft Edges) & Anti-Aliasing
+            # Morphology hardens binary edges. We inject a minimum 3x3 blur if 
+            # supersampling is active to ensure the downscale creates a smooth anti-aliased edge.
+            k_size = 1
+            if sep_type == 'raster' and use_supersampling:
+                k_size = 3
+                
             if smooth_edges > 0:
                 s_edg = smooth_edges / 3.0
-                k_size = int(s_edg * 2) * 2 + 1 # Must be odd
+                computed_k = int(s_edg * 2) * 2 + 1
+                k_size = max(k_size, computed_k)
+                
+            if k_size > 1:
                 alpha_channel = cv2.GaussianBlur(alpha_channel, (k_size, k_size), 0)
 
-            layer_out = np.zeros((height, width, 4), dtype=np.uint8)
+            # SuperSampling downscale: return to original resolution
+            if use_supersampling and sep_type == 'raster':
+                alpha_channel = cv2.resize(alpha_channel, (orig_width, orig_height), interpolation=cv2.INTER_AREA)
+
+            layer_out = np.zeros((orig_height, orig_width, 4), dtype=np.uint8)
             layer_out[:, :, 3] = alpha_channel
             result_layers.append({"index": i, "data": layer_out.flatten()})
     
@@ -482,6 +531,7 @@ export const performSeparation = async (imageData: ImageData, palette: PaletteCo
     const perChannelMin = palette.map(p => p.gradientMin !== undefined ? p.gradientMin : -1);
     const perChannelMax = palette.map(p => p.gradientMax !== undefined ? p.gradientMax : 0);
     const perChannelGamma = palette.map(p => p.gamma !== undefined ? p.gamma : 0);
+    const useGradientList = palette.map(p => !!p.useGradient);
 
     const layersProxy = await separateColorsPy(
         data, width, height, paletteHex,
@@ -493,7 +543,8 @@ export const performSeparation = async (imageData: ImageData, palette: PaletteCo
         config.useRasterAdaptive, config.minCoverage,
         config.denoiseStrength, config.denoiseSpatial,
         perChannelMin, perChannelMax, perChannelGamma,
-        config.useSubstrateKnockout, config.substrateColorHex, config.substrateThreshold
+        config.useSubstrateKnockout, config.substrateColorHex, config.substrateThreshold,
+        useGradientList, config.useSuperSampling
     );
 
     const layersDataMapList = layersProxy.toJs();
@@ -525,14 +576,15 @@ export const performSeparation = async (imageData: ImageData, palette: PaletteCo
     return resultLayers;
 };
 
-export const applyHalftone = async (imageData: ImageData, config: AdvancedConfig): Promise<ImageData> => {
+export const applyHalftone = async (imageData: ImageData, config: AdvancedConfig, channelAngle?: number): Promise<ImageData> => {
     if (!pyodide) throw new Error("Pyodide not initialized");
     const { width, height, data } = imageData;
     let resultProxy;
 
     if (config.halftoneType === 'am') {
+        const angle = channelAngle !== undefined ? channelAngle : config.halftoneAngle;
         const applyHalftoneAmPy = pyodide.globals.get('apply_halftone_am_py');
-        resultProxy = await applyHalftoneAmPy(data, width, height, config.halftoneLpi, config.halftoneAngle, config.outputDpi);
+        resultProxy = await applyHalftoneAmPy(data, width, height, config.halftoneLpi, angle, config.outputDpi);
         applyHalftoneAmPy.destroy();
     } else {
         const applyHalftoneFmPy = pyodide.globals.get('apply_halftone_fm_py');

@@ -175,6 +175,24 @@ const AdvancedSettings: React.FC<AdvancedSettingsProps> = ({ config, onChange, i
                   </div>
                 </label>
 
+                {/* SuperSampling */}
+                <label className="flex items-center justify-between cursor-pointer pt-2 border-t border-gray-700">
+                  <span className="text-gray-400 flex items-center gap-1.5">
+                    <Sparkles className="w-3 h-3 text-purple-400" />
+                    Supersampling (2x)
+                  </span>
+                  <div className="relative inline-block w-8 h-4 align-middle select-none transition duration-200 ease-in">
+                    <input
+                      type="checkbox"
+                      checked={config.useSuperSampling}
+                      onChange={(e) => updateField('useSuperSampling', e.target.checked)}
+                      className="toggle-checkbox absolute block w-4 h-4 rounded-full bg-white border-4 appearance-none cursor-pointer checked:right-0 checked:border-purple-600 right-4 border-gray-300"
+                    />
+                    <label className={`toggle-label block overflow-hidden h-4 rounded-full cursor-pointer ${config.useSuperSampling ? 'bg-purple-600' : 'bg-gray-600'}`}></label>
+                  </div>
+                </label>
+                <p className="text-[9px] text-gray-500 pl-5">Mejora bordes pero duplica tiempo de proceso.</p>
+
                 {/* Substrate Knockout */}
                 <label className="flex items-center justify-between cursor-pointer pt-2 border-t border-gray-700">
                   <span className="text-gray-400 flex items-center gap-1.5">
@@ -374,6 +392,27 @@ const AdvancedSettings: React.FC<AdvancedSettingsProps> = ({ config, onChange, i
                 </div>
               </>
             )}
+          </div>
+
+          {/* SECCIÓN 4: BASE BLANCA (UNDERBASE) */}
+          <div className="space-y-3 pb-3 border-b border-gray-700">
+            <label className="text-gray-400 font-bold uppercase flex items-center gap-1">
+              4. Underbase (Base Blanca)
+              <span title="Configuración de la capa base para prendas oscuras"><Layers className="w-3 h-3 opacity-50" /></span>
+            </label>
+            <div className="space-y-1">
+              <div className="flex justify-between text-gray-400">
+                <span className="text-[10px]">Choke (Erosión interior)</span>
+                <span className="text-blue-400 font-mono text-[10px]">{config.underbaseChoke} px</span>
+              </div>
+              <input
+                type="range" min="0" max="5" step="1"
+                value={config.underbaseChoke}
+                onChange={(e) => updateField('underbaseChoke', parseInt(e.target.value))}
+                className="w-full h-1 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-blue-500"
+                title="Reduce el tamaño del underbase para evitar bordes blancos (1-2px recomendado)"
+              />
+            </div>
           </div>
 
           <div className="space-y-1 pt-2">
