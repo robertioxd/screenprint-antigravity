@@ -51,45 +51,19 @@ const PaletteManager: React.FC<PaletteManagerProps> = ({ palette, setPalette, on
     setPalette(updated);
   };
 
-  const handleUpdateGradient = (id: string, field: 'gradientMin' | 'gradientMax' | 'gamma', value: number) => {
-    const updated = palette.map(c => {
-      if (c.id === id) {
-        return { ...c, [field]: value };
-      }
-      return c;
-    });
-    setPalette(updated);
-  };
+
 
   const handleToggleUnderbase = (id: string) => {
-    const updated = palette.map(c => ({
-      ...c,
-      // Only the selected ID becomes the underbase; clear it for others
-      isUnderbase: c.id === id ? !c.isUnderbase : false
-    }));
-    setPalette(updated);
-  };
-
-  const handleToggleGradient = (id: string) => {
     const updated = palette.map(c => {
       if (c.id === id) {
-        return { ...c, useGradient: !c.useGradient };
+        return { ...c, isUnderbase: !c.isUnderbase };
       }
       return c;
     });
     setPalette(updated);
   };
 
-  const handleClearGradient = (id: string) => {
-    const updated = palette.map(c => {
-      if (c.id === id) {
-        const { gradientMin, gradientMax, gamma, ...rest } = c;
-        return rest;
-      }
-      return c;
-    });
-    setPalette(updated);
-  };
+
 
   // Drag and drop handlers
   const handleDragStart = (e: React.DragEvent, index: number) => {
@@ -204,13 +178,8 @@ const PaletteManager: React.FC<PaletteManagerProps> = ({ palette, setPalette, on
                     <Layers className="w-2 h-2 text-white" />
                   </div>
                 )}
-                {color.useGradient && (
-                  <div className="absolute -bottom-1 -right-1 bg-purple-500 rounded-full p-0.5 shadow-sm border border-gray-800">
-                    <Waves className="w-2 h-2 text-white" />
-                  </div>
-                )}
               </div>
-              <div className="flex-1 flex flex-col justify-center">
+              <div className="flex-1 min-w-0 flex flex-col justify-center">
                 <input
                   type="text"
                   value={color.hex}
@@ -245,19 +214,10 @@ const PaletteManager: React.FC<PaletteManagerProps> = ({ palette, setPalette, on
               <button
                 onClick={() => handleToggleUnderbase(color.id)}
                 className={`p-1 transition-colors rounded ${color.isUnderbase ? 'text-blue-400 bg-gray-700 border border-blue-500/30' : 'text-gray-500 hover:text-blue-400'}`}
-                title={color.isUnderbase ? "Eliminar como Underbase" : "Establecer como Underbase (Base Blanca)"}
+                title="Alternar como color contribuyente a la Base Blanca (Underbase)"
               >
                 <Layers className="w-3 h-3" />
               </button>
-              {separationType === 'raster' && (
-                <button
-                  onClick={() => handleToggleExpand(color.id)}
-                  className={`p-1 transition-colors rounded ${expandedId === color.id ? 'text-blue-400 bg-gray-700' : 'text-gray-500 hover:text-blue-400'}`}
-                  title="Gradient Settings"
-                >
-                  <SlidersHorizontal className="w-3 h-3" />
-                </button>
-              )}
               <button
                 onClick={() => handleRemove(color.id)}
                 className="text-gray-500 hover:text-red-400 p-1 transition-colors ml-1"
@@ -265,88 +225,6 @@ const PaletteManager: React.FC<PaletteManagerProps> = ({ palette, setPalette, on
                 <Trash2 className="w-3 h-3" />
               </button>
             </div>
-
-            {/* Per-channel gradient controls (Raster only) */}
-            {separationType === 'raster' && expandedId === color.id && (
-              <div className="px-3 pb-3 pt-1 border-t border-gray-700 space-y-2 animate-in slide-in-from-top-1 duration-150">
-                {/* Solid / Gradient Mode Switch */}
-                <div className="flex items-center gap-1 mb-2">
-                  <button
-                    onClick={() => { if (color.useGradient) handleToggleGradient(color.id); }}
-                    className={`flex-1 flex items-center justify-center gap-1 py-1.5 rounded text-[10px] font-bold uppercase transition-all ${!color.useGradient ? 'bg-gray-600 text-white shadow-sm' : 'text-gray-500 hover:bg-gray-700'}`}
-                  >
-                    ■ Sólido
-                  </button>
-                  <button
-                    onClick={() => { if (!color.useGradient) handleToggleGradient(color.id); }}
-                    className={`flex-1 flex items-center justify-center gap-1 py-1.5 rounded text-[10px] font-bold uppercase transition-all ${color.useGradient ? 'bg-purple-600 text-white shadow-sm' : 'text-gray-500 hover:bg-gray-700'}`}
-                  >
-                    <Waves className="w-3 h-3" /> Gradiente
-                  </button>
-                </div>
-
-                {/* Gradient sliders — only visible when useGradient is true */}
-                {color.useGradient && (
-                  <>
-                    <div className="flex justify-between items-center mb-1">
-                      <span className="text-[9px] text-gray-500 font-bold uppercase">Rango de Captura</span>
-                      {(color.gradientMin !== undefined || color.gradientMax !== undefined || color.gamma !== undefined) && (
-                        <button
-                          onClick={() => handleClearGradient(color.id)}
-                          className="text-[9px] text-red-400 hover:text-red-300 uppercase font-bold"
-                        >Reset Auto</button>
-                      )}
-                    </div>
-                    <div className="space-y-1">
-                      <div className="flex justify-between text-gray-400">
-                        <span className="text-[10px]">Solidez (Min)</span>
-                        <span className="text-purple-400 font-mono text-[10px]">{color.gradientMin ?? 'Auto'}</span>
-                      </div>
-                      <input
-                        type="range" min="0" max="100" step="1"
-                        value={color.gradientMin ?? 10}
-                        onChange={(e) => handleUpdateGradient(color.id, 'gradientMin', parseInt(e.target.value))}
-                        className="w-full h-1 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-purple-500"
-                        title="Distancia donde la tinta es 100% sólida"
-                      />
-                    </div>
-                    <div className="space-y-1">
-                      <div className="flex justify-between text-gray-400">
-                        <span className="text-[10px]">Alcance (Max)</span>
-                        <span className="text-purple-400 font-mono text-[10px]">{color.gradientMax ?? 'Auto'}</span>
-                      </div>
-                      <input
-                        type="range" min="5" max="200" step="1"
-                        value={color.gradientMax ?? 110}
-                        onChange={(e) => handleUpdateGradient(color.id, 'gradientMax', parseInt(e.target.value))}
-                        className="w-full h-1 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-purple-500"
-                        title="Distancia donde la tinta desaparece (0% opacidad)"
-                      />
-                    </div>
-                    <div className="space-y-1">
-                      <div className="flex justify-between text-gray-400">
-                        <span className="text-[10px]">Gamma</span>
-                        <span className="text-purple-400 font-mono text-[10px]">{(color.gamma ?? 1.25).toFixed(2)}</span>
-                      </div>
-                      <input
-                        type="range" min="0.1" max="3.0" step="0.05"
-                        value={color.gamma ?? 1.25}
-                        onChange={(e) => handleUpdateGradient(color.id, 'gamma', parseFloat(e.target.value))}
-                        className="w-full h-1 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-purple-500"
-                        title="Ganancia de la curva del gradiente"
-                      />
-                    </div>
-                  </>
-                )}
-
-                {/* Info text when solid mode */}
-                {!color.useGradient && (
-                  <p className="text-[9px] text-gray-500 italic text-center py-1">
-                    Modo Sólido: este color se asigna como ganador absoluto (sin degradado).
-                  </p>
-                )}
-              </div>
-            )}
           </div>
         ))}
       </div>

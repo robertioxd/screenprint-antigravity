@@ -120,7 +120,7 @@ const SEPARATION_SHADER = `#version 300 es
         if (u_blendEnabled[0] == 1) {
             for(int i = 0; i < numActive; i++) {
                 float err = colorDistance(pixelColor, activeColors[i]);
-                if (err < bestError - u_blendTolerance[0]) {
+                if (err < bestError) {
                     bestError = err;
                     for(int j=0; j<16; j++) bestWeights[j] = 0.0;
                     bestWeights[activeIndices[i]] = 1.0;
@@ -232,7 +232,7 @@ const SEPARATION_SHADER = `#version 300 es
         if (u_blendEnabled[0] == 1) {
             for (int i = 0; i < numActive; i++) {
                 float err = colorDistance(pixelColor, activeColors[i]);
-                if (err < bestError - u_blendTolerance[0]) {
+                if (err < bestError) {
                     bestError = err;
                     for (int j = 0; j < 16; j++) bestWeights[j] = 0.0;
                     bestWeights[activeIndices[i]] = 1.0;
@@ -241,10 +241,9 @@ const SEPARATION_SHADER = `#version 300 es
         }
         
         // Pairs
-        if (u_blendEnabled[1] == 1 && bestError > 0.01) {
+        if (u_blendEnabled[1] == 1) {
             for (int i = 0; i < numActive; i++) {
                 for (int j = i + 1; j < numActive; j++) {
-                    if (bestError < 0.005) break;
                     if (isPairBlocked(activeIndices[i], activeIndices[j])) continue;
                     
                     vec3 c1 = activeColors[i];
@@ -272,12 +271,10 @@ const SEPARATION_SHADER = `#version 300 es
         }
         
         // Triplets
-        if (u_blendEnabled[2] == 1 && bestError > 0.015) {
+        if (u_blendEnabled[2] == 1) {
             for (int i = 0; i < numActive; i++) {
                 for (int j = i + 1; j < numActive; j++) {
-                    if (bestError < 0.005) break;
                     for (int k = j + 1; k < numActive; k++) {
-                        if (bestError < 0.005) break;
                         vec3 a = activeColors[i];
                         vec3 b = activeColors[j];
                         vec3 c = activeColors[k];
@@ -584,11 +581,13 @@ export class WebGLEngine {
         if (!this.program) return;
 
         // Quad geometry covering -1 to 1 space
+        // Draw image upside down so that gl.readPixels (which starts from bottom-left)
+        // returns a properly oriented array for ImageData/Canvas.
         const positions = new Float32Array([
-            -1, -1, 0, 1,
-            1, -1, 1, 1,
-            -1, 1, 0, 0,
-            1, 1, 1, 0
+            -1, -1, 0, 0,
+            1, -1, 1, 0,
+            -1, 1, 0, 1,
+            1, 1, 1, 1
         ]);
 
         this.vao = this.gl.createVertexArray();
@@ -730,25 +729,36 @@ export class WebGLEngine {
         gl.uniform3f(gl.getUniformLocation(this.program, 'u_bgColor'), bgRgb.r / 255, bgRgb.g / 255, bgRgb.b / 255);
 
         // Precompute Blocked Colinear Pairs
-        const blockedPairsRaw = detectBlockedPairs(activeChannelsForMath);
+        // Use user defined pairs if available, otherwise auto-detect
+        let blockedPairsRaw = config.userBlockedPairs;
+        if (!blockedPairsRaw || blockedPairsRaw.length === 0) {
+            blockedPairsRaw = detectBlockedPairs(activeChannelsForMath);
+        }
+
         const blockedPairsFlat = new Int32Array(64);
-        for (let i = 0; i < Math.min(blockedPairsRaw.length, 32); i++) {
+        const maxPairs = Math.min(blockedPairsRaw.length, 32);
+        for (let i = 0; i < maxPairs; i++) {
             blockedPairsFlat[i * 2] = blockedPairsRaw[i][0];
             blockedPairsFlat[i * 2 + 1] = blockedPairsRaw[i][1];
         }
         gl.uniform1iv(gl.getUniformLocation(this.program, 'u_blockedPairs'), blockedPairsFlat);
-        gl.uniform1i(gl.getUniformLocation(this.program, 'u_blockedPairCount'), Math.min(blockedPairsRaw.length, 32));
+        gl.uniform1i(gl.getUniformLocation(this.program, 'u_blockedPairCount'), maxPairs);
 
         // New Raster Settings based on AdvancedConfig implementation plan
         gl.uniform1f(gl.getUniformLocation(this.program, 'u_contrast'), 1.0); // Kept default
 
         // Blend Enable [Singles, Pairs, Triplets, Quads/IDW]
-        gl.uniform1iv(gl.getUniformLocation(this.program, 'u_blendEnabled'), new Int32Array([1, 1, 1, 1]));
+        const blendEn = config.blendEnabled || [true, true, true, false];
+        gl.uniform1iv(gl.getUniformLocation(this.program, 'u_blendEnabled'), new Int32Array([
+            blendEn[0] ? 1 : 0,
+            blendEn[1] ? 1 : 0,
+            blendEn[2] ? 1 : 0,
+            blendEn[3] ? 1 : 0
+        ]));
 
         // Dynamic Blend Tolerance based on config
-        const bt = config.blendTolerance || 0.05;
-        // Increase tolerance per level naturally
-        gl.uniform1fv(gl.getUniformLocation(this.program, 'u_blendTolerance'), new Float32Array([bt, bt * 1.5, bt * 2.0, bt * 3.0]));
+        const btArr = config.blendTolerances || [0.05, 0.03, 0.02, 0.02];
+        gl.uniform1fv(gl.getUniformLocation(this.program, 'u_blendTolerance'), new Float32Array(btArr));
 
         gl.uniform1f(gl.getUniformLocation(this.program, 'u_spotHardness'), config.spotHardness ?? 0.5);
         gl.uniform1f(gl.getUniformLocation(this.program, 'u_alphaThreshold'), config.alphaThreshold ?? 0.1);
@@ -768,11 +778,13 @@ export class WebGLEngine {
             gl.uniform1i(gl.getUniformLocation(this.program, `u_channelVisible[${i}]`), activeData[i]); // ViewMode 1 overrides visibility anyway
             gl.uniform1i(gl.getUniformLocation(this.program, `u_channelUnderbase[${i}]`), underbaseData[i]);
 
-            // Hardcode plate morphology defaults (optional configuration can be wired later)
             gl.uniform1i(gl.getUniformLocation(this.program, `u_channelChoke[${i}]`), 0);
             gl.uniform1i(gl.getUniformLocation(this.program, `u_channelSpread[${i}]`), 0);
-            gl.uniform1i(gl.getUniformLocation(this.program, `u_channelChokeUB[${i}]`), 0);
+
+            // Map the underbase choke configuration to the WebGL shader uniform
+            gl.uniform1i(gl.getUniformLocation(this.program, `u_channelChokeUB[${i}]`), (underbaseData[i] === 1 && (config.underbaseChoke ?? 1) > 0) ? 1 : 0);
             gl.uniform1i(gl.getUniformLocation(this.program, `u_channelSpreadUB[${i}]`), 0);
+
 
             gl.uniform1f(gl.getUniformLocation(this.program, `u_channelBlackPt[${i}]`), 0.0);
             gl.uniform1f(gl.getUniformLocation(this.program, `u_channelWhitePt[${i}]`), 1.0);
@@ -791,17 +803,25 @@ export class WebGLEngine {
             const ubPixels = new Uint8Array(width * height * 4);
             gl.readPixels(0, 0, width, height, gl.RGBA, gl.UNSIGNED_BYTE, ubPixels);
 
+            const rgbMatch = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(config.underbaseColorHex || '#FFFFFF');
+            const r = rgbMatch ? parseInt(rgbMatch[1], 16) : 255;
+            const g = rgbMatch ? parseInt(rgbMatch[2], 16) : 255;
+            const b = rgbMatch ? parseInt(rgbMatch[3], 16) : 255;
+
             const len = width * height * 4;
             const finalData = new Uint8ClampedArray(len);
             for (let pIdx = 0; pIdx < len; pIdx += 4) {
                 // u_viewMode = 2 outputs vec4(vec3(positiveValue), 1.0)
                 // positiveValue = 1.0 - underbaseValue -> we want 255 - pixel -> underbaseValue * 255
+                finalData[pIdx] = r;
+                finalData[pIdx + 1] = g;
+                finalData[pIdx + 2] = b;
                 finalData[pIdx + 3] = 255 - ubPixels[pIdx];
             }
 
             layers.push({
                 id: `layer-underbase-${Date.now()}`,
-                color: { id: `ub-${Date.now()}`, hex: '#ffffff', rgb: { r: 255, g: 255, b: 255 }, locked: true, isUnderbase: true },
+                color: { id: `ub-${Date.now()}`, hex: config.underbaseColorHex || '#FFFFFF', rgb: { r, g, b }, locked: true, isUnderbase: true },
                 data: new ImageData(finalData, width, height),
                 visible: true
             });

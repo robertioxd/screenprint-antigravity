@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { Layers, Printer, Wand2, Settings, Download, ScanEye, Package, ChevronDown, FileImage, FileArchive, Pipette, Maximize2, X, BookOpen, Undo, Redo, Eye, EyeOff, GripVertical, Palette, ScanFace, FileText, Brain, MessageSquare, CheckCircle, XCircle } from 'lucide-react';
 import UploadZone from './components/UploadZone';
 import PaletteManager from './components/PaletteManager';
+import PairMatrix from './components/PairMatrix';
 import LayerPreview, { LayerViewMode } from './components/LayerPreview';
 import ComparisonView from './components/ComparisonView';
 import AdvancedSettings from './components/AdvancedSettings';
@@ -204,7 +205,8 @@ const App: React.FC = () => {
                     result,
                     advancedConfig.underbaseChoke,
                     workingImage.width,
-                    workingImage.height
+                    workingImage.height,
+                    advancedConfig.underbaseColorHex
                 );
                 // Prepend underbase to the layer stack (Layer 0, printed first)
                 result = [underbaseLayer, ...result];
@@ -509,6 +511,18 @@ const App: React.FC = () => {
                     </div>
                 </div>
 
+                {/* Run Separation (Primary Action) */}
+                <div className="flex items-center border-l border-gray-700 pl-4 ml-4 h-8">
+                    <Button
+                        className="text-xs py-1.5 px-4 shadow-lg shadow-blue-900/20 font-bold tracking-wider"
+                        onClick={runSeparation}
+                        disabled={palette.length === 0 || !originalImage || !engineReady}
+                        isLoading={status === ProcessingStatus.SEPARATING || status === ProcessingStatus.COMPOSITING || status === ProcessingStatus.RESIZING}
+                    >
+                        {status === ProcessingStatus.RESIZING ? 'Rescaling...' : 'Run Separation'}
+                    </Button>
+                </div>
+
                 {/* User Guide Download */}
                 <div className="flex items-center border-l border-gray-700 pl-4 ml-4 h-8">
                     <a
@@ -540,7 +554,7 @@ const App: React.FC = () => {
             </header>
 
             <main className="flex-1 flex overflow-hidden">
-                <aside className="w-80 bg-gray-900 border-r border-gray-700 flex flex-col p-4 gap-4 overflow-y-auto custom-scrollbar flex-shrink-0">
+                <aside className="w-[360px] bg-gray-900 border-r border-gray-700 flex flex-col p-4 gap-4 overflow-y-auto custom-scrollbar flex-shrink-0">
 
                     {/* Output Size Panel */}
                     {originalImage && (
@@ -559,9 +573,38 @@ const App: React.FC = () => {
                         <PaletteManager palette={palette} setPalette={setPalette} onAnalyze={runAnalysis} status={status} separationType={advancedConfig.separationType} />
                     </div>
 
+                    <div className="space-y-3 pb-3 border-b border-gray-700">
+                        <label className="text-gray-500 font-bold uppercase flex items-center gap-2 px-1 text-xs tracking-widest">
+                            <Layers className="w-4 h-4" /> 2. Motor de Separación
+                        </label>
+                        <div className="grid grid-cols-2 gap-2 mb-2">
+                            <button
+                                onClick={() => setAdvancedConfig({ ...advancedConfig, separationType: 'vector' })}
+                                className={`p-2 rounded border flex flex-col items-center gap-1 transition-all ${advancedConfig.separationType === 'vector' ? 'bg-blue-600 border-blue-500 text-white' : 'bg-gray-800 border-gray-700 text-gray-400 hover:bg-gray-700'}`}
+                            >
+                                <Layers className="w-4 h-4" />
+                                <span className="text-[10px] font-bold">Vector (Sólido)</span>
+                            </button>
+                            <button
+                                onClick={() => setAdvancedConfig({ ...advancedConfig, separationType: 'raster' })}
+                                className={`p-2 rounded border flex flex-col items-center gap-1 transition-all ${advancedConfig.separationType === 'raster' ? 'bg-blue-600 border-blue-500 text-white' : 'bg-gray-800 border-gray-700 text-gray-400 hover:bg-gray-700'}`}
+                            >
+                                <FileImage className="w-4 h-4" />
+                                <span className="text-[10px] font-bold">Simulated Process</span>
+                            </button>
+                        </div>
+                        {advancedConfig.separationType === 'raster' && palette.length > 1 && (
+                            <PairMatrix
+                                palette={palette}
+                                userBlockedPairs={advancedConfig.userBlockedPairs || []}
+                                onChange={(pairs) => setAdvancedConfig({ ...advancedConfig, userBlockedPairs: pairs })}
+                            />
+                        )}
+                    </div>
+
                     <div className="space-y-3">
                         <div className="flex items-center gap-2 text-xs font-bold text-gray-500 uppercase tracking-widest px-1">
-                            <Settings className="w-4 h-4" /> 2. Procesamiento
+                            <Settings className="w-4 h-4" /> 3. Procesamiento
                         </div>
                         <AdvancedSettings
                             config={advancedConfig}
@@ -584,9 +627,6 @@ const App: React.FC = () => {
                             onRequestAuth={() => setIsAuthModalOpen(true)}
                         />
                         <div className="space-y-2">
-                            <Button className="w-full text-sm py-2.5 shadow-lg shadow-blue-900/20" onClick={runSeparation} disabled={palette.length === 0 || !originalImage || !engineReady} isLoading={status === ProcessingStatus.SEPARATING || status === ProcessingStatus.COMPOSITING || status === ProcessingStatus.RESIZING}>
-                                {status === ProcessingStatus.RESIZING ? 'Rescaling Image...' : 'Run Separation'}
-                            </Button>
                             <Button className="w-full text-sm py-2.5" variant="secondary" onClick={runHalftone} disabled={layers.length === 0 || !engineReady} isLoading={status === ProcessingStatus.HALFTONING}>
                                 Apply Bitmaps
                             </Button>
@@ -614,6 +654,8 @@ const App: React.FC = () => {
                                                     height: originalImage.height,
                                                     num_colors: palette.length,
                                                     palette_hex: palette.map(p => p.hex),
+                                                    blocked_pairs_count: advancedConfig.userBlockedPairs.length,
+                                                    has_underbase: palette.some(p => p.isUnderbase),
                                                     timestamp: new Date().toISOString(),
                                                 },
                                             });
@@ -951,12 +993,27 @@ const App: React.FC = () => {
                                                     denoiseSpatial: result.denoiseSpatial,
                                                     cleanupStrength: result.cleanupStrength,
                                                     minCoverage: result.minCoverage,
-                                                    useRasterAdaptive: result.useRasterAdaptive,
-                                                    useSubstrateKnockout: result.useSubstrateKnockout,
-                                                    substrateColorHex: result.substrateColorHex,
-                                                    substrateThreshold: result.substrateThreshold,
                                                     gamma: result.gamma,
                                                     halftoneLpi: result.halftoneLpi,
+                                                    halftoneAngle: result.halftoneAngle ?? 22.5,
+
+                                                    // Vector-specific
+                                                    ...(result.separationType === 'vector' && {
+                                                        useVectorAntiAliasing: result.useVectorAntiAliasing,
+                                                        vectorAASigma: result.vectorAASigma
+                                                    }),
+
+                                                    // Raster-specific (WebGL)
+                                                    ...(result.separationType === 'raster' && {
+                                                        spotHardness: result.spotHardness,
+                                                        blendEnabled: result.blendEnabled,
+                                                        blendTolerances: result.blendTolerances,
+                                                        alphaThreshold: result.alphaThreshold,
+                                                        alphaStrength: result.alphaStrength,
+                                                        ubStrength: result.ubStrength,
+                                                        ubGamma: result.ubGamma,
+                                                        underbaseChoke: result.underbaseChoke
+                                                    }),
                                                 }));
                                                 setAiReasoning(result.reasoning);
                                                 setShowAIPromptModal(false);

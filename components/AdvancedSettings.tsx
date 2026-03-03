@@ -13,7 +13,7 @@ interface AdvancedSettingsProps {
 }
 
 const AdvancedSettings: React.FC<AdvancedSettingsProps> = ({ config, onChange, isOpen, onToggle, onAIAnalyze, aiLoading, hasImage }) => {
-  const updateField = (field: keyof AdvancedConfig, value: number | string | boolean) => {
+  const updateField = (field: keyof AdvancedConfig, value: any) => {
     onChange({ ...config, [field]: value });
   };
 
@@ -89,25 +89,8 @@ const AdvancedSettings: React.FC<AdvancedSettingsProps> = ({ config, onChange, i
           {/* SECCIÓN 1: MOTOR DE SEPARACIÓN */}
           <div className="space-y-2 pb-3 border-b border-gray-700">
             <label className="text-gray-400 font-bold uppercase flex items-center gap-1">
-              1. Motor de Separación
+              1. Configuración Específica
             </label>
-
-            <div className="grid grid-cols-2 gap-2 mb-2">
-              <button
-                onClick={() => updateField('separationType', 'vector')}
-                className={`p-2 rounded border flex flex-col items-center gap-1 transition-all ${config.separationType === 'vector' ? 'bg-blue-600 border-blue-500 text-white' : 'bg-gray-800 border-gray-700 text-gray-400 hover:bg-gray-700'}`}
-              >
-                <Layers className="w-4 h-4" />
-                <span className="text-[10px] font-bold">Vector (Sólido)</span>
-              </button>
-              <button
-                onClick={() => updateField('separationType', 'raster')}
-                className={`p-2 rounded border flex flex-col items-center gap-1 transition-all ${config.separationType === 'raster' ? 'bg-blue-600 border-blue-500 text-white' : 'bg-gray-800 border-gray-700 text-gray-400 hover:bg-gray-700'}`}
-              >
-                <ImageIcon className="w-4 h-4" />
-                <span className="text-[10px] font-bold">Raster (Soft)</span>
-              </button>
-            </div>
 
             {/* Sub-settings based on Type */}
             {config.separationType === 'vector' ? (
@@ -165,41 +148,68 @@ const AdvancedSettings: React.FC<AdvancedSettingsProps> = ({ config, onChange, i
                 <div className="space-y-1">
                   <div className="flex justify-between text-gray-400">
                     <span className="text-[10px]">Spot Hardness</span>
-                    <span className="text-blue-400 font-mono text-[10px]">{config.spotHardness.toFixed(2)}</span>
+                    <span className="text-blue-400 font-mono text-[10px]">{(config.spotHardness ?? 0.5).toFixed(2)}</span>
                   </div>
                   <input
                     type="range" min="0" max="1" step="0.05"
-                    value={config.spotHardness}
+                    value={config.spotHardness ?? 0.5}
                     onChange={(e) => updateField('spotHardness', parseFloat(e.target.value))}
                     className="w-full h-1 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-blue-500"
                     title="0 = fotográfico, 1 = duro vectorial"
                   />
                 </div>
 
-                {/* Blend Tolerance */}
-                <div className="space-y-1">
-                  <div className="flex justify-between text-gray-400">
-                    <span className="text-[10px]">Blend Tolerance</span>
-                    <span className="text-green-400 font-mono text-[10px]">{config.blendTolerance.toFixed(3)}</span>
-                  </div>
-                  <input
-                    type="range" min="0" max="0.5" step="0.01"
-                    value={config.blendTolerance}
-                    onChange={(e) => updateField('blendTolerance', parseFloat(e.target.value))}
-                    className="w-full h-1 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-green-500"
-                    title="Tolerancia anti-muddying. Valores altos mezclan más colores."
-                  />
+                {/* Blend Levels (Singles, Pairs, Triplets, Quads+) */}
+                <div className="space-y-2 bg-gray-900/50 p-2 rounded border border-gray-700">
+                  <span className="text-[10px] font-bold text-gray-400 uppercase">Niveles de Mezcla (Blend Levels)</span>
+
+                  {[
+                    { key: 0, label: 'Singles', color: 'text-blue-400', accent: 'accent-blue-500' },
+                    { key: 1, label: 'Pairs', color: 'text-green-400', accent: 'accent-green-500' },
+                    { key: 2, label: 'Triplets', color: 'text-yellow-400', accent: 'accent-yellow-500' },
+                    { key: 3, label: 'Quads+', color: 'text-orange-400', accent: 'accent-orange-500' }
+                  ].map(({ key, label, color, accent }) => (
+                    <div key={key} className="space-y-1">
+                      <div className="flex justify-between items-center text-gray-400">
+                        <label className="flex items-center gap-2 text-[10px] cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={config.blendEnabled[key]}
+                            onChange={(e) => {
+                              const newArr = [...config.blendEnabled] as [boolean, boolean, boolean, boolean];
+                              newArr[key] = e.target.checked;
+                              updateField('blendEnabled', newArr);
+                            }}
+                            className="rounded bg-gray-700 border-gray-600 outline-none accent-blue-500"
+                          />
+                          <span className={color}>{label}</span>
+                        </label>
+                        <span className="font-mono text-[9px]">{(config.blendTolerances[key] ?? 0).toFixed(3)}</span>
+                      </div>
+                      <input
+                        type="range" min="0" max="0.5" step="0.005"
+                        disabled={!config.blendEnabled[key]}
+                        value={config.blendTolerances[key] ?? 0}
+                        onChange={(e) => {
+                          const newArr = [...config.blendTolerances] as [number, number, number, number];
+                          newArr[key] = parseFloat(e.target.value);
+                          updateField('blendTolerances', newArr);
+                        }}
+                        className={`w-full h-1 bg-gray-700 rounded-lg appearance-none cursor-pointer ${accent} ${!config.blendEnabled[key] ? 'opacity-30' : ''}`}
+                      />
+                    </div>
+                  ))}
                 </div>
 
                 {/* Alpha Edge Mask */}
                 <div className="space-y-1">
                   <div className="flex justify-between text-gray-400">
                     <span className="text-[10px]">Fuerza Alpha Edge</span>
-                    <span className="text-purple-400 font-mono text-[10px]">{config.alphaStrength.toFixed(2)}</span>
+                    <span className="text-purple-400 font-mono text-[10px]">{(config.alphaStrength ?? 1.0).toFixed(2)}</span>
                   </div>
                   <input
                     type="range" min="0" max="1" step="0.05"
-                    value={config.alphaStrength}
+                    value={config.alphaStrength ?? 1.0}
                     onChange={(e) => updateField('alphaStrength', parseFloat(e.target.value))}
                     className="w-full h-1 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-purple-500"
                   />
@@ -209,11 +219,11 @@ const AdvancedSettings: React.FC<AdvancedSettingsProps> = ({ config, onChange, i
                 <div className="space-y-1">
                   <div className="flex justify-between text-gray-400">
                     <span className="text-[10px]">Umbral Alpha</span>
-                    <span className="text-purple-400 font-mono text-[10px]">{config.alphaThreshold.toFixed(2)}</span>
+                    <span className="text-purple-400 font-mono text-[10px]">{(config.alphaThreshold ?? 0.05).toFixed(2)}</span>
                   </div>
                   <input
                     type="range" min="0" max="0.1" step="0.01"
-                    value={config.alphaThreshold}
+                    value={config.alphaThreshold ?? 0.05}
                     onChange={(e) => updateField('alphaThreshold', parseFloat(e.target.value))}
                     className="w-full h-1 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-purple-500"
                   />
@@ -223,11 +233,11 @@ const AdvancedSettings: React.FC<AdvancedSettingsProps> = ({ config, onChange, i
                 <div className="space-y-1 border-t border-gray-700 pt-2 mt-2">
                   <div className="flex justify-between text-gray-400">
                     <span className="text-[10px] flex items-center gap-1"><Layers className="w-3 h-3 text-orange-400" /> UB Fuerza</span>
-                    <span className="text-orange-400 font-mono text-[10px]">{config.ubStrength.toFixed(2)}</span>
+                    <span className="text-orange-400 font-mono text-[10px]">{(config.ubStrength ?? 1.0).toFixed(2)}</span>
                   </div>
                   <input
                     type="range" min="0" max="2" step="0.05"
-                    value={config.ubStrength}
+                    value={config.ubStrength ?? 1.0}
                     onChange={(e) => updateField('ubStrength', parseFloat(e.target.value))}
                     className="w-full h-1 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-orange-500"
                   />
@@ -237,11 +247,11 @@ const AdvancedSettings: React.FC<AdvancedSettingsProps> = ({ config, onChange, i
                 <div className="space-y-1">
                   <div className="flex justify-between text-gray-400">
                     <span className="text-[10px]">UB Gamma</span>
-                    <span className="text-orange-400 font-mono text-[10px]">{config.ubGamma.toFixed(2)}</span>
+                    <span className="text-orange-400 font-mono text-[10px]">{(config.ubGamma ?? 1.5).toFixed(2)}</span>
                   </div>
                   <input
                     type="range" min="0.1" max="3.0" step="0.1"
-                    value={config.ubGamma}
+                    value={config.ubGamma ?? 1.5}
                     onChange={(e) => updateField('ubGamma', parseFloat(e.target.value))}
                     className="w-full h-1 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-orange-500"
                   />
@@ -291,11 +301,11 @@ const AdvancedSettings: React.FC<AdvancedSettingsProps> = ({ config, onChange, i
             <div className="space-y-1">
               <div className="flex justify-between text-gray-400">
                 <span className="flex items-center gap-1"><Ghost className="w-3 h-3 text-red-400" /> Cobertura Mínima</span>
-                <span className="text-blue-400 font-mono">{config.minCoverage.toFixed(1)}%</span>
+                <span className="text-blue-400 font-mono">{((config.minCoverage ?? 0.2)).toFixed(1)}%</span>
               </div>
               <input
                 type="range" min="0" max="5" step="0.1"
-                value={config.minCoverage}
+                value={config.minCoverage ?? 0.2}
                 onChange={(e) => updateField('minCoverage', parseFloat(e.target.value))}
                 className="w-full h-1 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-blue-500"
                 title="Descarta capas que tengan menos del X% de cobertura total"
@@ -375,6 +385,21 @@ const AdvancedSettings: React.FC<AdvancedSettingsProps> = ({ config, onChange, i
                 title="Reduce el tamaño del underbase para evitar bordes blancos (1-2px recomendado)"
               />
             </div>
+            <div className="space-y-1 mt-3">
+              <div className="flex justify-between items-center text-gray-400">
+                <span className="text-[10px]">Color de Previsualización</span>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="color"
+                    value={config.underbaseColorHex || '#FFFFFF'}
+                    onChange={(e) => updateField('underbaseColorHex', e.target.value)}
+                    className="h-5 w-5 p-0 border-0 rounded cursor-pointer shrink-0"
+                    title="Color del Underbase (ej. Blanco, Gris, etc.)"
+                  />
+                  <span className="text-blue-400 font-mono text-[10px] uppercase">{config.underbaseColorHex || '#FFFFFF'}</span>
+                </div>
+              </div>
+            </div>
           </div>
 
           <div className="space-y-1 pt-2">
@@ -382,11 +407,11 @@ const AdvancedSettings: React.FC<AdvancedSettingsProps> = ({ config, onChange, i
               <label className="text-gray-400 font-bold uppercase flex items-center gap-1">
                 Opacidad Visual
               </label>
-              <span className="text-blue-400 font-mono">{(config.inkOpacity * 100).toFixed(0)}%</span>
+              <span className="text-blue-400 font-mono">{((config.inkOpacity ?? 0.90) * 100).toFixed(0)}%</span>
             </div>
             <input
               type="range" min="0" max="1" step="0.01"
-              value={config.inkOpacity}
+              value={config.inkOpacity ?? 0.90}
               onChange={(e) => updateField('inkOpacity', parseFloat(e.target.value))}
               className="w-full h-1 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-blue-500"
             />

@@ -275,7 +275,8 @@ def apply_halftone_fm_py(layer_data, width, height):
     return out.flatten()
 
 def generate_composite_py(layers_list, colors_hex, width, height, alpha):
-    # Optimized composition
+    # Linear Burn composite (matches v113 WebGL proof shader)
+    # Start with white substrate
     composite = np.full((height, width, 3), 255.0, dtype=np.float32)
     
     for i, layer_proxy in enumerate(layers_list):
@@ -285,19 +286,18 @@ def generate_composite_py(layers_list, colors_hex, width, height, alpha):
         # Fast skip empty layers
         if cv2.countNonZero(layer_alpha) == 0: continue
             
-        effective_alpha = (layer_alpha.astype(np.float32) / 255.0) * (alpha / 255.0)
+        # Weight = alpha channel normalized to 0-1, scaled by global ink opacity
+        weight = (layer_alpha.astype(np.float32) / 255.0) * (alpha / 255.0)
         
         hex_c = colors_hex[i].lstrip('#')
-        r, g, b = [int(hex_c[i:i+2], 16) for i in (0, 2, 4)]
-        color_rgb = np.array([r, g, b], dtype=np.float32)
+        r, g, b = [int(hex_c[j:j+2], 16) for j in (0, 2, 4)]
+        ink_color = np.array([r, g, b], dtype=np.float32)
         
-        # Subtractive mixing simulation
-        effective_alpha_broad = effective_alpha[:, :, np.newaxis]
-        composite = composite * (1.0 - effective_alpha_broad) + color_rgb * effective_alpha_broad
-        
-        # Alternative multiply blend (more like ink):
-        # inv_alpha = 1.0 - effective_alpha_broad
-        # composite = composite * inv_alpha + (composite * (color_rgb/255.0)) * effective_alpha_broad
+        # Linear Burn: result = max(0, base + layerColor - 255)
+        # layerColor = mix(inkColor, white, 1 - weight) = inkColor * weight + 255 * (1 - weight)
+        weight_broad = weight[:, :, np.newaxis]
+        layer_color = ink_color * weight_broad + 255.0 * (1.0 - weight_broad)
+        composite = np.maximum(0.0, composite + layer_color - 255.0)
 
     composite_final = np.clip(composite, 0, 255).astype(np.uint8)
     rgba = cv2.cvtColor(composite_final, cv2.COLOR_RGB2RGBA)

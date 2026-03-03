@@ -28,14 +28,17 @@ export function generateUnderbaseLayer(
     layers: Layer[],
     chokePixels: number,
     width: number,
-    height: number
+    height: number,
+    underbaseColorHex: string = '#FFFFFF'
 ): Layer {
     const totalPixels = width * height;
 
     // Step 1: Create union mask (OR of all alpha channels)
     const unionMask = new Uint8Array(totalPixels);
 
-    for (const layer of layers) {
+    const underbaseLayers = layers.filter(l => l.color.isUnderbase);
+
+    for (const layer of underbaseLayers) {
         const data = layer.data.data;
         for (let i = 0; i < totalPixels; i++) {
             const alpha = data[i * 4 + 3];
@@ -52,18 +55,24 @@ export function generateUnderbaseLayer(
     }
 
     // Step 3: Create white ImageData with the union mask as alpha
+    // We import hexToRgb or implement a quick parser
+    const rgbMatch = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(underbaseColorHex);
+    const r = rgbMatch ? parseInt(rgbMatch[1], 16) : 255;
+    const g = rgbMatch ? parseInt(rgbMatch[2], 16) : 255;
+    const b = rgbMatch ? parseInt(rgbMatch[3], 16) : 255;
+
     const underbaseData = new Uint8ClampedArray(totalPixels * 4);
     for (let i = 0; i < totalPixels; i++) {
-        underbaseData[i * 4] = 255;     // R = white
-        underbaseData[i * 4 + 1] = 255; // G = white
-        underbaseData[i * 4 + 2] = 255; // B = white
+        underbaseData[i * 4] = r;     // R
+        underbaseData[i * 4 + 1] = g; // G
+        underbaseData[i * 4 + 2] = b; // B
         underbaseData[i * 4 + 3] = finalMask[i]; // Alpha from mask
     }
 
     const underbaseColor: PaletteColor = {
         id: `underbase-${Date.now()}`,
-        hex: '#FFFFFF',
-        rgb: { r: 255, g: 255, b: 255 },
+        hex: underbaseColorHex,
+        rgb: { r, g, b },
         locked: true,
         isUnderbase: true
     };

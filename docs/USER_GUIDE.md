@@ -1,6 +1,6 @@
 # 📖 ScreenPrint Pro — User Guide
-**Version**: 2.0  
-**Last Updated**: February 2026  
+**Version**: 3.0  
+**Last Updated**: March 2026  
 **Audience**: Designers and pre-press operators working with textile screen printing color separation.
 
 ---
@@ -13,12 +13,13 @@
 4. [Ink Palette Management](#4-ink-palette-management)
 5. [Separation Engines](#5-separation-engines)
    - [5.1 Vector (Solid)](#51-vector-solid)
-   - [5.2 Raster (Soft / Gradient)](#52-raster-soft--gradient)
-6. [Understanding the Gradient System (Raster)](#6-understanding-the-gradient-system-raster)
-   - [6.1 How Color Distance Works](#61-how-color-distance-works)
-   - [6.2 The Gradient Formula](#62-the-gradient-formula)
-   - [6.3 Per-Channel Gradient Overrides](#63-per-channel-gradient-overrides)
-   - [6.4 Practical Scenario: Gradient Between Only 2 of 5 Colors](#64-practical-scenario-gradient-between-only-2-of-5-colors)
+   - [5.2 Raster / Simulated Process (WebGL)](#52-raster--simulated-process-webgl)
+6. [Selective Underbase System](#6-selective-underbase-system)
+   - [6.1 What is an Underbase?](#61-what-is-an-underbase)
+   - [6.2 Selecting Underbase Colors](#62-selecting-underbase-colors)
+   - [6.3 Underbase Choke (Erosion)](#63-underbase-choke-erosion)
+   - [6.4 Underbase Preview Color](#64-underbase-preview-color)
+   - [6.5 How the Underbase is Calculated](#65-how-the-underbase-is-calculated)
 7. [Color Distance Methods](#7-color-distance-methods)
 8. [Pre-Processing (Denoise)](#8-pre-processing-denoise)
 9. [Cleanup & Refinement](#9-cleanup--refinement)
@@ -37,7 +38,7 @@
 
 ## 1. System Overview
 
-ScreenPrint Pro is a browser-based color separation tool built specifically for **textile screen printing (serigraphy)**. It runs entirely in your browser using a **Python scientific computing engine** (Pyodide) for professional-grade image processing.
+ScreenPrint Pro is a browser-based color separation tool built specifically for **textile screen printing (serigraphy)**. It features a **dual-engine architecture**: a **Python/Pyodide** engine for precise spot-color vector separations, and a **WebGL GPU-accelerated** engine for real-time simulated process (gradient) separations.
 
 ### How It Works (High Level)
 
@@ -62,6 +63,7 @@ ScreenPrint Pro is a browser-based color separation tool built specifically for 
 | **Color Science** | scikit-image (CIEDE2000) | Perceptually accurate color distance |
 | **Image Processing** | OpenCV + NumPy | Fast pixel manipulation and morphology |
 | **Palette Detection** | K-Means (CIELAB space) | Automatic ink color extraction |
+| **GPU Separation** | WebGL 2.0 (GLSL ES 3.0) | Real-time simulated process on GPU |
 | **Halftoning** | Custom AM / PIL Floyd-Steinberg | Print-ready dot patterns |
 | **AI Analysis** | Google Gemini 2.5 Flash | Automatic configuration suggestions |
 
@@ -71,9 +73,10 @@ ScreenPrint Pro is a browser-based color separation tool built specifically for 
 
 1. **Upload** your design image (PNG, JPG, or PDF)
 2. Set **Max Colors** (e.g., 6) and click **Auto** to detect dominant colors
-3. Choose your **Separation Engine**: Vector (solid) or Raster (gradient)
-4. Click **Run Separation** to generate color channels
-5. Optionally click **Apply Bitmaps** to convert to halftone dots
+3. Choose your **Separation Engine**: Vector (solid) or Simulated Process (gradient)
+4. Optionally select colors that need an **Underbase** by clicking the 🔲 layers icon on each color
+5. Click **Run Separation** in the **top header bar** to generate color channels
+6. Optionally click **Apply Bitmaps** to convert to halftone dots
 6. **Export** as ZIP (individual channels) or composite preview
 
 ---
@@ -115,18 +118,16 @@ The palette defines **which ink colors** will be used for separation. Each color
 ### Color Editing
 - Click on any hex code in the palette to edit it directly
 - Colors can be removed with the trash icon
+- **Drag and drop** colors to change their order (affects layer stacking)
 
-### Per-Channel Gradient Controls (Raster Mode Only)
-When in **Raster** mode, each color shows a slider icon (⚙). Clicking it reveals three controls per color:
+### Underbase Toggle (All Modes)
+Each color now has a **Layers icon** (🔲) button. Clicking it toggles that color as an **Underbase Contributor**. You can select **multiple** colors — the system will generate a composite underbase from all selected colors. See [Section 6](#6-selective-underbase-system) for full details.
 
-| Control | Range | Default | Description |
-|:---|:---|:---|:---|
-| **Solidez (Min)** | 0–100 | Auto (0) | The color distance below which ink is **100% solid**. Higher values = larger solid core. |
-| **Alcance (Max)** | 5–200 | Auto (60) | The color distance at which ink fades to **0%**. Higher values = wider gradient reach. |
-| **Gamma** | 0.1–3.0 | Auto (1.25) | Curve adjustment for the gradient falloff. Values < 1 = more ink in transitions. Values > 1 = less ink, sharper cutoff. |
-
-> [!IMPORTANT]
-> These per-channel overrides are the **most powerful tool** for controlling gradients. See [Section 6](#6-understanding-the-gradient-system-raster) for a full explanation.
+### Pantone Matching
+Each palette color shows its closest **Pantone Solid Coated** match with an accuracy indicator:
+- **Exacta** (ΔE ≤ 2.0): Visually identical
+- **Buena** (ΔE 2.0–5.0): Acceptable match
+- **Aprox.** (ΔE > 5.0): Approximate, may need manual adjustment
 
 ---
 
@@ -134,7 +135,7 @@ When in **Raster** mode, each color shows a slider icon (⚙). Clicking it revea
 
 ### 5.1 Vector (Solid)
 
-**What it does:** Assigns each pixel to exactly ONE color — the closest match in the palette. The result is a flat, solid separation with no gradients.
+**What it does:** Assigns each pixel to exactly ONE color — the closest match in the palette. The result is a flat, solid separation with no gradients. Powered by the **Pyodide/Python** engine.
 
 **Best for:**
 - Spot color printing (Pantone inks)
@@ -143,7 +144,7 @@ When in **Raster** mode, each color shows a slider icon (⚙). Clicking it revea
 - When you need clean, sharp edges
 
 **How it works internally:**
-1. For each pixel, the algorithm calculates the distance to every palette color
+1. For each pixel, the algorithm calculates the CIEDE2000 distance to every palette color
 2. The pixel is assigned to the **nearest** palette color
 3. That channel gets a 255 alpha (fully opaque) at that position
 4. All other channels get 0 alpha (transparent)
@@ -158,182 +159,128 @@ When in **Raster** mode, each color shows a slider icon (⚙). Clicking it revea
 
 ---
 
-### 5.2 Raster (Soft / Gradient)
+### 5.2 Raster / Simulated Process (WebGL)
 
-**What it does:** Assigns each pixel a **variable opacity** based on its color proximity to each palette color. This creates smooth gradients and soft transitions between colors.
+**What it does:** Runs entirely on the **GPU via WebGL 2.0**. It assigns each pixel a **variable opacity** using a multi-tier blending hierarchy: Singles, Pairs, Triplets, and Quads/IDW (Inverse Distance Weighting). This creates smooth, photographic-quality gradients.
 
 **Best for:**
 - Photographic or photorealistic designs
-- Simulated process separations
+- Simulated process separations (CMYK-style on custom palettes)
 - Designs with blends, shadows, or color transitions
-- When you need smooth tonal reproduction
+- When you need smooth tonal reproduction with fast processing
 
-**How it works internally:**
-1. For each pixel, the distance to every palette color is calculated
-2. The opacity (alpha) of each channel at that pixel is computed using a **proximity × exclusivity** formula
-3. Multiple channels can have non-zero alpha at the same pixel, creating overlapping ink zones
-4. A gamma curve is applied to control the ink density falloff
+**How it works internally (GPU Shader):**
+1. The shader evaluates every pixel against the full palette in RGB color space
+2. It tests increasingly complex blending tiers:
+   - **Singles**: Closest single palette color
+   - **Pairs**: Best 2-color interpolation (linear projection)
+   - **Triplets**: Best 3-color barycentric interpolation
+   - **Quads+ / IDW**: Inverse distance weighting using all colors
+3. A **Spot Hardness** contrast curve sharpens or softens the weight distribution
+4. **Alpha Edge** masking applies transparency-aware blending
+5. Channel-specific **Output Levels** (Black/White/Mid points) fine-tune density
+6. **Underbase** is computed natively in the shader via Linear Burn compositing
 
 **Sub-parameters:**
 
 | Parameter | Range | Default | Description |
 |:---|:---|:---|:---|
-| **Adaptive Threshold** | On/Off | On | Uses the maximum distance in each chunk as the reference, rather than a fixed global value. Results in better contrast. |
-| **Gamma** | 0.1–3.0 | 1.25 | Global gamma for all channels. Controls the overall gradient falloff curve. |
+| **Spot Hardness** | 0.0–1.0 | 0.50 | Controls weight contrast. **0** = photographic/smooth. **1** = hard/vector-like edges. |
+| **Blend Levels** | 4 toggleable tiers | Singles+Pairs+Triplets ON | Enable/disable each blending tier independently. Each tier also has a **tolerance** slider controlling how aggressively it overrides the previous tier. |
+| **Fuerza Alpha Edge** | 0.0–1.0 | 1.00 | Strength of the source alpha channel influence. **0** = ignore transparency. **1** = fully respect transparency. |
+| **Umbral Alpha** | 0.0–0.10 | 0.05 | Minimum alpha threshold below which pixels are considered fully transparent. |
+| **UB Fuerza** | 0.0–2.0 | 1.00 | Multiplier for the underbase intensity. Higher values = denser white base. |
+| **UB Gamma** | 0.1–3.0 | 1.50 | Gamma curve for the underbase. Values > 1 suppress light areas of the base. |
 
----
+#### Pair Matrix (Colinearity Prevention)
 
-## 6. Understanding the Gradient System (Raster)
+When in **Simulated Process** mode with 2+ colors, a **Pair Matrix** appears below the engine selector. This is a triangular grid showing every possible pair of palette colors.
 
-This is the **heart** of the raster engine and the key to mastering color separation for photographic prints. This section explains exactly how the system decides how much ink to place at each pixel.
-
-### 6.1 How Color Distance Works
-
-Every pixel in your image has an RGB color value. Each color in your palette also has an RGB value. The system measures "how different" a pixel is from each palette color using a **color distance** metric.
-
-```
-Pixel Color: (R=120, G=80, B=200)  ← A purple pixel
-
-Palette:
-  Color A (Red):    #FF0000  → distance = 210
-  Color B (Blue):   #0000FF  → distance = 150
-  Color C (Purple): #7733CC  → distance = 25   ← Closest!
-  Color D (White):  #FFFFFF  → distance = 220
-  Color E (Black):  #000000  → distance = 180
-```
-
-The system calculates this distance for **every pixel** against **every palette color**, generating a distance matrix.
-
-### 6.2 The Gradient Formula
-
-For each pixel, the ink opacity of channel `i` is calculated as:
-
-```
-alpha = proximity × exclusivity × source_alpha
-```
-
-Where:
-
-#### Proximity (How close is this pixel to this color?)
-```
-proximity = clamp(1.0 - (distance - ch_min) / ch_range, 0, 1)
-```
-- `distance`: How far this pixel is from palette color `i`
-- `ch_min`: The "solidez" value — distances below this are 100% solid
-- `ch_range`: `ch_max - ch_min` — the gradient window width
-- Result: **1.0** when the pixel is very close (solid ink), **0.0** when far away (no ink)
-
-#### Exclusivity (Is this the dominant color here?)
-```
-exclusivity = clamp(1.0 - (distance - min_distance) / slope, 0, 1)
-```
-- `min_distance`: The distance to the **closest** palette color at this pixel
-- If this IS the closest color: `distance - min_distance = 0` → exclusivity = 1.0
-- If another color is closer: exclusivity drops, reducing ink
-- This prevents colors from "bleeding" where they're not dominant
-
-#### Gamma (Curve Adjustment)
-```
-final_alpha = alpha ^ gamma
-```
-- `gamma = 1.0`: Linear falloff (no change)
-- `gamma > 1.0`: Reduces midtones, sharper transitions, less ink
-- `gamma < 1.0`: Boosts midtones, softer transitions, more ink
-
-### Visual Representation
-
-```
-Ink Density
-100% ███████████
-      ██████████ ·
-       █████████ · ·
-        ████████ · · ·     ← gamma < 1.0 (more ink in transitions)
-         ███████ · · · ·
-          ██████ · · · · ·
-           █████ · · · · · ·
-            ████ · · · · · · ·
-             ███ · · · · · · · ·
-  0%          ██ · · · · · · · · ·
-     ──────────────────────────────
-     Solid Zone │  Gradient Zone    │ No ink
-     (ch_min)   │                   │ (ch_max)
-                ├── ch_range ──────┤
-```
-
-### 6.3 Per-Channel Gradient Overrides
-
-Each palette color can have its own **Solidez (Min)**, **Alcance (Max)**, and **Gamma** values. This lets you control the gradient behavior of each ink independently.
-
-#### Solidez (Min) — "Solid Zone Width"
-- **Low value (0–10):** Only pixels very close to this exact color get solid ink
-- **High value (50–100):** A wider range of similar colors get solid ink
-- **Use case:** Increase this for colors that need a strong, opaque core (like white underbase)
-
-#### Alcance (Max) — "Gradient Reach"
-- **Low value (5–30):** Ink cuts off quickly. Sharp transitions.
-- **High value (100–200):** Ink gradually fades over a longer distance. Soft, wide gradients.
-- **Use case:** Set high for colors that need to blend into other colors (like skin tones)
-
-#### Gamma — "Curve Shape"
-- **0.1–0.9:** Boosts midtones → more ink in transition zones, softer blends
-- **1.0:** Linear (no adjustment)
-- **1.1–3.0:** Suppresses midtones → less ink in transitions, crisper edges
-
----
-
-### 6.4 Practical Scenario: Gradient Between Only 2 of 5 Colors
-
-**Problem:** You have a design with 5 colors: Red, Blue, Purple, White, Black. You want a smooth gradient between Red and Blue (through Purple), but you want White and Black to remain **completely solid** with **no gradient**.
-
-**Solution:** Use per-channel gradient overrides to restrict the gradient range.
-
-#### Step-by-Step:
-
-1. **Select Raster mode** in the Separation Engine section
-
-2. **For Red (#FF0000):** Click the slider icon (⚙)
-   - Solidez (Min): **10** — Small solid core
-   - Alcance (Max): **120** — Wide gradient reach (allows blending with blue)
-   - Gamma: **0.80** — Slightly boosted midtones for a smoother gradient
-
-3. **For Blue (#0000FF):** Click the slider icon (⚙)
-   - Solidez (Min): **10** — Small solid core
-   - Alcance (Max): **120** — Wide gradient reach (allows blending with red)
-   - Gamma: **0.80** — Match red's curve
-
-4. **For Purple (#7733CC):** Leave at **Auto**
-   - The purple zone naturally lives in the gradient between red and blue. Auto handles this well.
-
-5. **For White (#FFFFFF):** Click the slider icon (⚙)
-   - Solidez (Min): **80** — Very wide solid zone
-   - Alcance (Max): **5** — Almost no gradient→ hard cutoff
-   - Gamma: **2.5** — Aggressively suppress any remaining transitions
-
-6. **For Black (#000000):** Click the slider icon (⚙)
-   - Solidez (Min): **80** — Very wide solid zone
-   - Alcance (Max): **5** — Almost no gradient → hard cutoff
-   - Gamma: **2.5** — Aggressively suppress any remaining transitions
-
-#### What Happens:
-
-```
-          Red Zone              Blue Zone
-         (gradient)            (gradient)
-    ████████▓▓▒▒░░  Purple  ░░▒▒▓▓████████
-                    (blend)
-
-    White Zone                  Black Zone
-    █████████████               █████████████
-    (solid, no                  (solid, no
-     gradient)                   gradient)
-```
-
-- Red and Blue have wide Alcance values, so their ink fades gradually into each other
-- White and Black have very narrow Alcance values and high Gamma, creating sharp solid areas
-- Purple, being equidistant from Red and Blue, naturally receives gradient ink from both
+- **Click a cell** to toggle a pair as **blocked** (red X) or **allowed** (green check)
+- **Blocked pairs** will never be blended together in the shader's Pairs tier
+- Use this to prevent unwanted color mixing (e.g., block Red+Green to avoid muddy brown transitions)
+- The system also **auto-detects** colinear pairs (colors on the same RGB line) and blocks them by default
 
 > [!TIP]
-> If you want to **completely remove** the gradient from a color, set `Solidez (Min) = 100` and `Alcance (Max) = 5`. This essentially makes it behave like Vector mode for that specific color, while keeping the rest in Raster mode.
+> If two colors are producing a muddy or undesirable transition, block their pair in the matrix. The shader will then treat them as separate zones instead of blending them.
+
+---
+
+## 6. Selective Underbase System
+
+The Selective Underbase is a powerful feature for **dark garment printing**. Instead of generating a blanket white base under the entire design, you can choose exactly which colors contribute to the underbase.
+
+### 6.1 What is an Underbase?
+
+An underbase is a layer of ink (usually white) printed **first** on a dark garment. It provides a neutral foundation so that the top colors appear vibrant and opaque. Without it, inks printed directly on a dark shirt will appear dull and transparent.
+
+```
+┌─────────────────────────────┐
+│      Dark Garment           │  ← Substrate (e.g., black t-shirt)
+│  ┌───────────────────────┐  │
+│  │  UNDERBASE (White)    │  │  ← Printed FIRST
+│  │  ┌─────────────────┐  │  │
+│  │  │  COLOR INKS     │  │  │  ← Printed ON TOP of underbase
+│  │  └─────────────────┘  │  │
+│  └───────────────────────┘  │
+└─────────────────────────────┘
+```
+
+### 6.2 Selecting Underbase Colors
+
+In the **Palette Manager**, each color has a **Layers icon** (🔲) button. Click it to toggle that color as an underbase contributor.
+
+- You can select **multiple** colors — they are no longer mutually exclusive
+- The underbase mask is generated by **OR-ing** (merging) the alpha channels of only the selected colors
+- Colors that are **not** selected (e.g., black, background colors) will NOT contribute to the underbase
+
+**Example:** In a 5-color palette (Red, Yellow, Blue, White, Black), you might select Red, Yellow, and Blue as underbase contributors. The generated underbase will cover only the areas where those three colors have ink, leaving the black areas without a white base.
+
+### 6.3 Underbase Choke (Erosion)
+
+Found in **Advanced Settings → Section 4: Underbase (Base Blanca)**.
+
+| Parameter | Range | Default | Description |
+|:---|:---|:---|:---|
+| **Choke (Erosión interior)** | 0–5 px | 1 px | Shrinks the underbase mask inward by N pixels. Prevents white edges from peeking out due to registration errors. |
+
+- **0 px**: No choke. The underbase exactly matches the ink coverage.
+- **1–2 px**: Recommended. Slightly smaller base prevents white halos.
+- **3–5 px**: Aggressive choke. Use for designs with thick outlines where registration is loose.
+
+The choke uses **morphological erosion** — iterating a box structuring element to shrink the mask uniformly from all edges.
+
+### 6.4 Underbase Preview Color
+
+Also in **Advanced Settings → Section 4**, next to the Choke slider.
+
+| Parameter | Type | Default | Description |
+|:---|:---|:---|:---|
+| **Color de Previsualización** | Color Picker | #FFFFFF | The color used to render the underbase layer in the preview and export. |
+
+- Default is **white** (#FFFFFF) for standard white underbases
+- Change to **grey** (#AAAAAA) for discharge or water-based underbases
+- Change to a **custom color** for specialty base inks
+
+### 6.5 How the Underbase is Calculated
+
+The calculation depends on which engine is active:
+
+**Vector Engine (JS):**
+1. Filter all separated layers to only those marked as `isUnderbase`
+2. OR all their alpha channels into a single union mask
+3. Apply the choke erosion for N iterations
+4. Fill the result with the chosen underbase color
+5. Insert as Layer 0 (first layer in the stack)
+
+**Raster Engine (WebGL):**
+1. The shader marks channels with `u_channelUnderbase[i] == 1`
+2. For each pixel, it computes a **Linear Burn** composite of those channels' weights
+3. Applies UB Strength, Gamma, and threshold processing
+4. The resulting alpha mask is extracted, colored with the chosen hex, and inserted as Layer 0
+
+> [!IMPORTANT]
+> The underbase is always **Layer 0** — it prints first. All other color layers print on top of it.
 
 ---
 
@@ -482,8 +429,9 @@ After completing a successful separation that produces good results, you can sav
 3. The current configuration, palette, and image metadata are saved to Supabase
 
 ### What Gets Saved:
-- All `AdvancedConfig` parameters
+- All `AdvancedConfig` parameters (including engine-specific ones like blend levels, spot hardness, underbase choke)
 - Separation type (vector/raster)
+- Blocked pairs count and underbase status
 - Image metadata (width, height, number of colors, palette hex values)
 - Timestamp
 
@@ -558,6 +506,9 @@ After separation, you can manipulate individual channels:
 - **Use denoise sparingly.** Over-denoising creates a "posterized" look that separates poorly.
 - **Match your LPI to your mesh count.** A good rule: LPI ≤ mesh count / 4.
 - **Substrate knockout is your friend** when printing on colored garments — it removes unnecessary ink deposits.
+- **Use the Pair Matrix** to prevent muddy blends in Simulated Process mode.
+- **Run Separation is now in the top bar**, so you can trigger it without scrolling the sidebar.
+- **Select multiple underbase colors** for precise control over dark garment printing.
 
 ---
 
@@ -580,20 +531,25 @@ After separation, you can manipulate individual channels:
 | `useVectorAntiAliasing` | Engine | Boolean | — | true | Vector |
 | `vectorAASigma` | Engine | Float | 0.1–5.0 | 1.0 | Vector |
 | `vectorAAThreshold` | Engine | Integer | 1–254 | 127 | Vector |
-| `useRasterAdaptive` | Engine | Boolean | — | true | Raster |
+| `spotHardness` | Engine | Float | 0–1 | 0.50 | Raster |
+| `blendEnabled` | Engine | Boolean[4] | — | [T,T,T,F] | Raster |
+| `blendTolerances` | Engine | Float[4] | 0–0.5 | [0.05,0.03,0.02,0.02] | Raster |
+| `alphaStrength` | Engine | Float | 0–1 | 1.00 | Raster |
+| `alphaThreshold` | Engine | Float | 0–0.1 | 0.05 | Raster |
+| `ubStrength` | Underbase | Float | 0–2 | 1.00 | Raster |
+| `ubGamma` | Underbase | Float | 0.1–3.0 | 1.50 | Raster |
+| `underbaseChoke` | Underbase | Integer | 0–5 px | 1 | Both |
+| `underbaseColorHex` | Underbase | Hex | — | #FFFFFF | Both |
 | `useSubstrateKnockout` | Substrate | Boolean | — | false | Both |
 | `substrateColorHex` | Substrate | Hex | — | #FFFFFF | Both |
 | `substrateThreshold` | Substrate | Integer | 10–120 | 50 | Both |
-| `cleanupStrength` | Cleanup | Integer | 0–10 | 1 | Both |
-| `smoothEdges` | Cleanup | Integer | 0–5 | 0 | Both |
+| `cleanupStrength` | Cleanup | Integer | 0–30 | 1 | Both |
+| `smoothEdges` | Cleanup | Integer | 0–15 | 0 | Both |
 | `minCoverage` | Cleanup | Float | 0–5% | 0.2% | Both |
 | `halftoneType` | Halftone | Enum | am / fm | am | Both |
 | `halftoneLpi` | Halftone | Integer | 15–150 | 45 | AM only |
 | `halftoneAngle` | Halftone | Float | 0–90° | 22.5° | AM only |
-| `gamma` | Engine | Float | 0.1–3.0 | 1.25 | Raster |
-| `gradientMin` | Per-Channel | Integer | 0–100 | Auto (0) | Raster |
-| `gradientMax` | Per-Channel | Integer | 5–200 | Auto (60) | Raster |
-| `gamma` (per-ch.) | Per-Channel | Float | 0.1–3.0 | Auto (1.25) | Raster |
+| `gamma` | Engine | Float | 0.1–3.0 | 1.25 | Both |
 
 ---
 
@@ -602,23 +558,31 @@ After separation, you can manipulate individual channels:
 | Term | Definition |
 |:---|:---|
 | **AM Halftone** | Amplitude Modulation. Dots of varying **size** at fixed spacing. |
-| **FM Halftone** | Frequency Modulation. Dots of fixed size at varying **spacing** (stochastic). |
+| **Choke** | Morphological erosion that shrinks a mask inward to prevent white edges from peeking out. |
 | **CIEDE2000** | The most advanced color difference formula, designed to match human perception. |
 | **CIELAB** | A color space that represents colors as Lightness (L), green-red axis (a), and blue-yellow axis (b). |
+| **Colinearity** | When palette colors lie on the same RGB line, which can cause blending artifacts. Blocked via the Pair Matrix. |
 | **Delta E (ΔE)** | The numerical value of color difference. ΔE < 1 is imperceptible. ΔE > 10 is obviously different. |
+| **FM Halftone** | Frequency Modulation. Dots of fixed size at varying **spacing** (stochastic). |
+| **IDW** | Inverse Distance Weighting. A blending fallback that weighs all colors by their inverse distance. |
 | **K-Means** | A clustering algorithm that groups pixels into a specified number of color clusters. |
+| **Linear Burn** | A blending mode used to composite underbase values: `result = max(0, 1 - ink_weight)`. |
 | **LPI** | Lines Per Inch. The density of halftone dots. Higher = finer. |
 | **Moiré** | An undesired interference pattern caused by overlapping dot screens at conflicting angles. |
-| **Morphology** | Image processing operations (opening, closing) that remove noise or fill gaps based on structural elements. |
+| **Morphology** | Image processing operations (opening, closing, erosion) that modify shape edges. |
+| **Pair Matrix** | A UI grid in Raster mode to block specific color pairs from blending. |
 | **RAG** | Retrieval-Augmented Generation. The AI retrieves past data to improve its suggestions. |
 | **RIP** | Raster Image Processor. Software that converts artwork to halftone-ready film output. |
+| **Selective Underbase** | A system where the user chooses which specific colors contribute to the underbase layer. |
 | **Separation** | The process of splitting an image into individual ink channels for screen printing. |
 | **Spot Color** | A pre-mixed ink color applied as a single, solid layer. |
+| **Spot Hardness** | A contrast curve applied to blending weights. Higher = sharper, more vector-like edges. |
 | **Substrate** | The material being printed on (t-shirt, paper, plastic). |
 | **Trapping** | Slight overlap of adjacent colors to prevent gaps caused by registration errors. |
-| **Underbase** | A layer of white ink printed first on dark garments so that top colors appear vibrant. |
+| **Underbase** | A layer of ink (usually white) printed first on dark garments so that top colors appear vibrant. |
+| **WebGL** | A JavaScript API for GPU-accelerated rendering in the browser. Used by the Raster engine. |
 
 ---
 
 *ScreenPrint Pro — Precision Pre-press Suite*  
-*Powered by Pyodide, OpenCV, scikit-image, and Google Gemini*
+*Powered by Pyodide, OpenCV, scikit-image, WebGL 2.0, and Google Gemini*

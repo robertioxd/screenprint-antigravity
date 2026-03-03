@@ -36,7 +36,9 @@ He analizado matemáticamente la imagen adjunta y he obtenido estos datos exacto
 - Dimensiones: ${image_metadata.width}x${image_metadata.height}
 - Número de colores: ${image_metadata.num_colors}
 - Paleta Hexadecimal: ${image_metadata.palette_hex.join(', ')}
-- Tipo de separación sugerida: ${separation_type}
+- Tiene Underbase (Blanco Base): ${image_metadata.has_underbase ? 'Sí' : 'No'}
+- Tipo de separación usada: ${separation_type}
+- Pares de colores bloqueados (Anti-muddying): ${image_metadata.blocked_pairs_count}
 
 Basándote en la imagen y estos datos, genera UNA sola descripción técnica y concisa (máximo 2 párrafos) que destaque el **ESTILO VISUAL** de la imagen y las **CARACTERÍSTICAS DEL BORDE**.
 Enfócate en palabras clave como: Alto contraste, bajo contraste, fotorrealista, ilustración vectorial, bordes limpios (aliased), bordes difuminados (anti-aliased/halftones), tintas planas, acuarela, desgaste (vintage/distressed), trazos finos, masas sólidas, etc.

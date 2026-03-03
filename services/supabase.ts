@@ -59,16 +59,30 @@ export async function deleteLoadout(id: string): Promise<boolean> {
 
 export interface AIAnalysisResult {
     separationType: 'vector' | 'raster';
+
+    // Shared parameters
     denoiseStrength: number;
     denoiseSpatial: number;
     cleanupStrength: number;
     minCoverage: number;
-    useRasterAdaptive: boolean;
-    useSubstrateKnockout: boolean;
-    substrateColorHex: string;
-    substrateThreshold: number;
     gamma: number;
     halftoneLpi: number;
+    halftoneAngle: number;
+
+    // Vector-specific
+    useVectorAntiAliasing: boolean;
+    vectorAASigma: number;
+
+    // Raster-specific (WebGL)
+    spotHardness: number;
+    blendEnabled: [boolean, boolean, boolean, boolean];
+    blendTolerances: [number, number, number, number];
+    alphaThreshold: number;
+    alphaStrength: number;
+    ubStrength: number;
+    ubGamma: number;
+    underbaseChoke: number;
+
     reasoning: string;
 }
 
@@ -89,6 +103,8 @@ export interface TrainingData {
         height: number;
         num_colors: number;
         palette_hex: string[];
+        blocked_pairs_count?: number;
+        has_underbase?: boolean;
         timestamp: string;
     };
 }

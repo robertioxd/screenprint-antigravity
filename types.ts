@@ -47,6 +47,9 @@ export interface AdvancedConfig {
   // WebGL Raster Engine parameters
   spotHardness: number;      // 0-1: Low=smooth photographic, High=hard vector
   blendTolerance: number;    // 0-0.5: Anti-muddying tolerance
+  blendEnabled: [boolean, boolean, boolean, boolean]; // Singles, Pairs, Triplets, Quads
+  blendTolerances: [number, number, number, number]; // Tolerances per level
+  userBlockedPairs: Array<[number, number]>; // Pairs blocked from mixing
   alphaThreshold: number;    // 0-0.1: Minimum to keep pixel
   alphaStrength: number;     // 0-1: Strength of alpha edge mask
   ubStrength: number;        // 0-2: Intensity of underbase calculation
@@ -65,6 +68,7 @@ export interface AdvancedConfig {
   gamma: number;
 
   // Underbase
+  underbaseColorHex: string; // Hex color mapping to the underbase preview
   underbaseChoke: number; // 0-5px: Erosion of the underbase mask to prevent white edges
 }
 
@@ -89,12 +93,15 @@ export const DEFAULT_CONFIG: AdvancedConfig = {
   vectorAAThreshold: 127,
 
   // WebGL Defaults
-  spotHardness: 0.5,
+  spotHardness: 0.0,
   blendTolerance: 0.05,
-  alphaThreshold: 0.05,
+  blendEnabled: [true, true, true, false],
+  blendTolerances: [0.05, 0.03, 0.02, 0.02],
+  userBlockedPairs: [],
+  alphaThreshold: 0.01,
   alphaStrength: 1.0,
   ubStrength: 1.0,
-  ubGamma: 1.5,
+  ubGamma: 1.0,
 
   cleanupStrength: 3,
   smoothEdges: 0,
@@ -105,6 +112,7 @@ export const DEFAULT_CONFIG: AdvancedConfig = {
   halftoneAngle: 22.5,
   gamma: 1.25,
 
+  underbaseColorHex: '#FFFFFF',
   underbaseChoke: 1
 };
 

@@ -15,13 +15,19 @@ Debes devolver ONLY a JSON object with the following structure:
   "denoiseSpatial": number (0-15),
   "cleanupStrength": number (0-10),
   "minCoverage": number (0.0-5.0),
-  "useRasterAdaptive": boolean,
-  "useSubstrateKnockout": boolean,
-  "substrateColorHex": string (#RRGGBB),
-  "substrateThreshold": number (0-100),
   "gamma": number (0.1-3.0),
   "halftoneLpi": number (30-90),
   "halftoneAngle": number (0-90),
+  "useVectorAntiAliasing": boolean,
+  "vectorAASigma": number (0.1-5.0),
+  "spotHardness": number (0.0-1.0),
+  "blendEnabled": [boolean, boolean, boolean, boolean],
+  "blendTolerances": [number, number, number, number],
+  "alphaThreshold": number (0.0-0.1),
+  "alphaStrength": number (0.0-1.0),
+  "ubStrength": number (0.0-2.0),
+  "ubGamma": number (0.1-3.0),
+  "underbaseChoke": number (0-5),
   "reasoning": string (Explica brevemente por qué elegiste esta configuración)
 }
 `
