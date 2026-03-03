@@ -198,8 +198,8 @@ const App: React.FC = () => {
 
             let result = await performSeparation(workingImage, palette, advancedConfig);
 
-            // Generate underbase if requested in the palette
-            if (palette.some(p => p.isUnderbase)) {
+            // Generate underbase via JS fallback if requested in the palette ONLY if not using raster engine (which natively generates it)
+            if (palette.some(p => p.isUnderbase) && advancedConfig.separationType !== 'raster') {
                 const underbaseLayer = generateUnderbaseLayer(
                     result,
                     advancedConfig.underbaseChoke,

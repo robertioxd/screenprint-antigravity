@@ -78,7 +78,12 @@ export const ChopModal: React.FC<ChopModalProps> = ({ layer, onClose, onGenerate
             halftoneAngle: 22.5,
             gamma: 1.0,
             useVectorAntiAliasing: true,
-            useRasterAdaptive: true
+            spotHardness: 0.5,
+            blendTolerance: 0.05,
+            alphaThreshold: 0.05,
+            alphaStrength: 1.0,
+            ubStrength: 1.0,
+            ubGamma: 1.5
         };
         try {
             const subs = await onGenerate(tempConfig, sublayerCount);

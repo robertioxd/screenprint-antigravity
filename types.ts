@@ -10,10 +10,6 @@ export interface PaletteColor {
   rgb: RGB;
   locked?: boolean;
   isUnderbase?: boolean;  // If true, this color acts as the underbase (white ink layer)
-  useGradient?: boolean;  // If true, uses SoftColor1-style pure proximity ramp (no exclusivity)
-  // Per-channel gradient range (Raster mode only, requires useGradient=true)
-  gradientMin?: number;  // 0-100: Distance where ink is 100% solid
-  gradientMax?: number;  // 0-200: Distance where ink fades to 0%
   gamma?: number;        // 0.1-3.0: Per-channel gamma curve
   halftoneAngle?: number; // Per-channel halftone angle (degrees) to prevent moiré
 }
@@ -48,14 +44,13 @@ export interface AdvancedConfig {
   vectorAASigma: number;
   vectorAAThreshold: number;
 
-  // Raster Specific
-  useRasterAdaptive: boolean;
-  useSuperSampling: boolean; // 2x upscale before separation for better edge quality
-
-  // Substrate Knockout
-  useSubstrateKnockout: boolean;
-  substrateColorHex: string;  // Color of the garment/paper
-  substrateThreshold: number; // 0-100: How aggressively to knock out
+  // WebGL Raster Engine parameters
+  spotHardness: number;      // 0-1: Low=smooth photographic, High=hard vector
+  blendTolerance: number;    // 0-0.5: Anti-muddying tolerance
+  alphaThreshold: number;    // 0-0.1: Minimum to keep pixel
+  alphaStrength: number;     // 0-1: Strength of alpha edge mask
+  ubStrength: number;        // 0-2: Intensity of underbase calculation
+  ubGamma: number;           // 0.1-3: Underbase gamma curve
 
   // Cleanup Parameters
   cleanupStrength: number; // 0-10: Relative area-based removal
@@ -93,12 +88,13 @@ export const DEFAULT_CONFIG: AdvancedConfig = {
   vectorAASigma: 1.0,
   vectorAAThreshold: 127,
 
-  useRasterAdaptive: true,
-  useSuperSampling: false,
-
-  useSubstrateKnockout: false,
-  substrateColorHex: '#ffffff',
-  substrateThreshold: 50,
+  // WebGL Defaults
+  spotHardness: 0.5,
+  blendTolerance: 0.05,
+  alphaThreshold: 0.05,
+  alphaStrength: 1.0,
+  ubStrength: 1.0,
+  ubGamma: 1.5,
 
   cleanupStrength: 3,
   smoothEdges: 0,

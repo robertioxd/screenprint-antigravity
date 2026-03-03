@@ -1,4 +1,5 @@
 import { PaletteColor, Layer, AdvancedConfig } from '../types';
+import { getWebGLEngine } from './webglEngine';
 
 let pyodide: any = null;
 let pythonInitialized = false;
@@ -78,23 +79,13 @@ def analyze_palette_py(image_data, width, height, k, sample_size):
     
     return hex_colors
 
-def separate_colors_py(image_data, width, height, palette_hex_list, kl, kc, kh, method, sep_type, cleanup_strength, smooth_edges, gamma_val, use_aa, aa_sigma, aa_threshold, use_adaptive, min_coverage, denoise_strength, denoise_spatial, per_channel_min_list, per_channel_max_list, per_channel_gamma_list, use_substrate_knockout, substrate_hex, substrate_threshold, use_gradient_list, use_supersampling):
+def separate_colors_py(image_data, width, height, palette_hex_list, kl, kc, kh, method, sep_type, cleanup_strength, smooth_edges, gamma_val, use_aa, aa_sigma, aa_threshold, min_coverage, denoise_strength, denoise_spatial):
     # 1. Load Data
     arr = np.array(image_data.to_py(), dtype=np.uint8).reshape(height, width, 4)
     rgb = arr[:, :, :3]
     
     # CRITICAL: Extract Source Alpha Channel for Masking
     source_alpha = arr[:, :, 3].astype(np.float32) / 255.0
-    
-    # Store original dimensions for supersampling downscale
-    orig_width, orig_height = width, height
-    
-    # SuperSampling: 2x upscale for better edge quality
-    if use_supersampling and sep_type == 'raster':
-        rgb = cv2.resize(rgb, (width * 2, height * 2), interpolation=cv2.INTER_CUBIC)
-        source_alpha = cv2.resize(source_alpha, (width * 2, height * 2), interpolation=cv2.INTER_CUBIC)
-        height, width = rgb.shape[:2]
-    
     source_alpha_flat = source_alpha.reshape(-1)
     
     # 2. Pre-processing: Bilateral Filter (OpenCV)
@@ -123,44 +114,6 @@ def separate_colors_py(image_data, width, height, palette_hex_list, kl, kc, kh, 
     elif method == 'lab_euclidean':
         # LAB-Euclidean: faster than CIEDE2000, more perceptually accurate than RGB Euclidean
         palette_lab_cv = cv2.cvtColor(palette_arr_uint8.reshape(1, -1, 3), cv2.COLOR_RGB2Lab).reshape(-1, 3).astype(np.float32)
-
-    # Adaptive Threshold Logic: per-color nearest-neighbor slopes
-    max_dist = 60.0 
-    dist_slope = 30.0
-    # Per-color gradient slopes based on nearest neighbor distance (prevents bleed)
-    per_color_slopes = np.full(len(palette_rgb), 30.0, dtype=np.float32)
-    if sep_type == 'raster' and use_adaptive and len(palette_rgb) > 1:
-        p_float_est = palette_arr_uint8.astype(np.float32)
-        # Vectorized distance matrix for palette
-        diff = p_float_est[:, np.newaxis, :] - p_float_est[np.newaxis, :, :]
-        dists_matrix = np.sqrt(np.sum(diff**2, axis=2))
-        np.fill_diagonal(dists_matrix, np.inf)
-        min_dists = np.min(dists_matrix, axis=1)
-        if len(min_dists) > 0:
-             avg_nearest = np.mean(min_dists)
-             max_dist = np.clip(avg_nearest * 0.7, 25.0, 70.0)
-             dist_slope = max_dist * 0.5
-             # Per-color slope: tighter for colors close to neighbors, wider for isolated colors
-             for ci in range(len(palette_rgb)):
-                 nn_dist = min_dists[ci]
-                 per_color_slopes[ci] = np.clip(nn_dist * 0.35, 10.0, 50.0)
-
-    # Per-channel gradient overrides
-    ch_min_arr = np.array(per_channel_min_list.to_py(), dtype=np.float32) if hasattr(per_channel_min_list, 'to_py') else np.array(per_channel_min_list, dtype=np.float32)
-    ch_max_arr = np.array(per_channel_max_list.to_py(), dtype=np.float32) if hasattr(per_channel_max_list, 'to_py') else np.array(per_channel_max_list, dtype=np.float32)
-    ch_gamma_arr = np.array(per_channel_gamma_list.to_py(), dtype=np.float32) if hasattr(per_channel_gamma_list, 'to_py') else np.array(per_channel_gamma_list, dtype=np.float32)
-
-    # Per-channel gradient toggle
-    use_gradient = np.array(use_gradient_list.to_py(), dtype=bool) if hasattr(use_gradient_list, 'to_py') else np.array(use_gradient_list, dtype=bool)
-
-    # Substrate knockout: precalculate ONCE (not per chunk)
-    substrate_rgb = None
-    substrate_mask_flat = None
-    if use_substrate_knockout and substrate_hex:
-        sh = substrate_hex.lstrip('#')
-        substrate_rgb = np.array([int(sh[i:i+2], 16) for i in (0, 2, 4)], dtype=np.float32)
-        sub_dist = np.linalg.norm(pixels_flat.astype(np.float32) - substrate_rgb, axis=1)
-        substrate_mask_flat = np.clip(1.0 - (sub_dist / float(substrate_threshold)), 0.0, 1.0)
 
     num_pixels = pixels_flat.shape[0]
     num_colors = len(palette_rgb)
@@ -192,73 +145,16 @@ def separate_colors_py(image_data, width, height, palette_hex_list, kl, kc, kh, 
             diff = chunk_float[:, np.newaxis, :] - palette_float[np.newaxis, :, :]
             chunk_dists = np.sqrt(np.sum(diff**2, axis=2))
 
-        if sep_type == 'vector':
-            labels = np.argmin(chunk_dists, axis=1)
-            for i in range(num_colors):
-                mask = (labels == i)
-                alpha_mask = (chunk_alpha > 0.5)
-                combined_mask = np.logical_and(mask, alpha_mask)
-                layer_raw_values[i, start:end][combined_mask] = 255.0
-        else:
-            # Raster mode: bifurcate per color (gradient vs solid)
-            labels = np.argmin(chunk_dists, axis=1)
-            min_dists_flat = np.min(chunk_dists, axis=1)
+        # === SOLID MODE: Winner-takes-all binary assignment ===
+        labels = np.argmin(chunk_dists, axis=1)
+        
+        for i in range(num_colors):
+            alpha = np.where(labels == i, 1.0, 0.0).astype(np.float32)
+            
+            # Apply Source Alpha Mask
+            alpha = alpha * chunk_alpha
 
-            # Precompute RGB distances if gradients are used to align metric boundaries
-            if np.any(use_gradient):
-                chunk_float = chunk_rgb.astype(np.float32)
-                diff_all_rgb = chunk_float[:, np.newaxis, :] - palette_float[np.newaxis, :, :]
-                dists_all_rgb = np.linalg.norm(diff_all_rgb, axis=2)
-                labels_rgb = np.argmin(dists_all_rgb, axis=1)
-                min_dists_rgb = np.min(dists_all_rgb, axis=1)
-
-            for i in range(num_colors):
-                raw_d = chunk_dists[:, i]
-
-                if use_gradient[i]:
-                    # === GRADIENT MODE: RGB Euclidean within CIEDE2000 territory (Option B) ===
-                    target_rgb = palette_float[i]
-                    diff_rgb = chunk_rgb.astype(np.float32) - target_rgb
-                    raw_d_rgb = np.linalg.norm(diff_rgb, axis=1)
-
-                    # Defaults for RGB are wider (0-441 range) than CIEDE2000 (0-100)
-                    ch_min = ch_min_arr[i] if ch_min_arr[i] >= 0 else 10.0
-                    ch_max = ch_max_arr[i] if ch_max_arr[i] > 0 else 110.0
-                    ch_range = max(ch_max - ch_min, 1.0)
-
-                    alpha = np.clip(1.0 - (raw_d_rgb - ch_min) / ch_range, 0.0, 1.0)
-
-                    # Per-channel gamma (fallback to global)
-                    g_val = ch_gamma_arr[i] if ch_gamma_arr[i] > 0 else gamma_val
-                    if g_val != 1.0:
-                        np.power(alpha, g_val, out=alpha)
-                        
-                    # Soft territory: how much does this color WIN vs its closest rival in RGB space?
-                    # Using RGB distances for both the ramp and the territory ensures 
-                    # the boundaries perfectly match without hard edges.
-                    dist_diff = dists_all_rgb[:, i] - min_dists_rgb
-                    
-                    # Feather Zone: smooth fade at the exact RGB boundary to prevent hard cuts.
-                    # 15 RGB distance units gives a smooth micro-blend at the pixel edge.
-                    feather_zone = 15.0  
-                    territory_soft = np.clip(1.0 - (dist_diff / feather_zone), 0.0, 1.0)
-                    
-                    # The territory_soft formula handles the boundary transition up to feather_zone units outside the boundary.
-                    # Do not multiply by 'labels_rgb == i' here, as that creates a hard boolean cutoff
-                    # which completely nullifies the feathering effect.
-                    alpha = alpha * territory_soft
-                else:
-                    # === SOLID MODE: Winner-takes-all binary assignment ===
-                    alpha = np.where(labels == i, 1.0, 0.0).astype(np.float32)
-                
-                # Apply Source Alpha Mask
-                alpha = alpha * chunk_alpha
-
-                # Substrate Knockout (precalculated)
-                if substrate_mask_flat is not None:
-                    alpha = alpha * (1.0 - substrate_mask_flat[start:end])
-
-                layer_raw_values[i, start:end] = alpha * 255.0
+            layer_raw_values[i, start:end] = alpha * 255.0
 
     gc.collect()
 
@@ -300,13 +196,7 @@ def separate_colors_py(image_data, width, height, palette_hex_list, kl, kc, kh, 
                         if stats[j, cv2.CC_STAT_AREA] < min_area:
                             alpha_channel[labels_cc == j] = 0
 
-            # General Smoothing (Soft Edges) & Anti-Aliasing
-            # Morphology hardens binary edges. We inject a minimum 3x3 blur if 
-            # supersampling is active to ensure the downscale creates a smooth anti-aliased edge.
-            k_size = 1
-            if sep_type == 'raster' and use_supersampling:
-                k_size = 3
-                
+            k_size = 0
             if smooth_edges > 0:
                 s_edg = smooth_edges / 3.0
                 computed_k = int(s_edg * 2) * 2 + 1
@@ -315,11 +205,7 @@ def separate_colors_py(image_data, width, height, palette_hex_list, kl, kc, kh, 
             if k_size > 1:
                 alpha_channel = cv2.GaussianBlur(alpha_channel, (k_size, k_size), 0)
 
-            # SuperSampling downscale: return to original resolution
-            if use_supersampling and sep_type == 'raster':
-                alpha_channel = cv2.resize(alpha_channel, (orig_width, orig_height), interpolation=cv2.INTER_AREA)
-
-            layer_out = np.zeros((orig_height, orig_width, 4), dtype=np.uint8)
+            layer_out = np.zeros((height, width, 4), dtype=np.uint8)
             layer_out[:, :, 3] = alpha_channel
             result_layers.append({"index": i, "data": layer_out.flatten()})
     
@@ -521,59 +407,56 @@ export const analyzePalette = async (imageData: ImageData, numColors: number, co
 };
 
 export const performSeparation = async (imageData: ImageData, palette: PaletteColor[], config: AdvancedConfig): Promise<Layer[]> => {
-    if (!pyodide) throw new Error("Pyodide not initialized");
-    const { width, height, data } = imageData;
-    const paletteHex = palette.map(p => p.hex);
+    if (config.separationType === 'raster') {
+        const engine = getWebGLEngine();
+        return engine.separate(imageData, palette, config);
+    } else {
+        // Pyodide Vector Path
+        if (!pyodide) throw new Error("Pyodide not initialized");
+        const { width, height, data } = imageData;
+        const paletteHex = palette.map(p => p.hex);
 
-    const separateColorsPy = pyodide.globals.get('separate_colors_py');
+        const separateColorsPy = pyodide.globals.get('separate_colors_py');
 
-    // Build per-channel gradient arrays from palette
-    const perChannelMin = palette.map(p => p.gradientMin !== undefined ? p.gradientMin : -1);
-    const perChannelMax = palette.map(p => p.gradientMax !== undefined ? p.gradientMax : 0);
-    const perChannelGamma = palette.map(p => p.gamma !== undefined ? p.gamma : 0);
-    const useGradientList = palette.map(p => !!p.useGradient);
+        const layersProxy = await separateColorsPy(
+            data, width, height, paletteHex,
+            config.kL, config.kC, config.kH,
+            config.separationMethod, config.separationType,
+            config.cleanupStrength, config.smoothEdges,
+            config.gamma, config.useVectorAntiAliasing,
+            config.vectorAASigma, config.vectorAAThreshold,
+            config.minCoverage,
+            config.denoiseStrength, config.denoiseSpatial
+        );
 
-    const layersProxy = await separateColorsPy(
-        data, width, height, paletteHex,
-        config.kL, config.kC, config.kH,
-        config.separationMethod, config.separationType,
-        config.cleanupStrength, config.smoothEdges,
-        config.gamma, config.useVectorAntiAliasing,
-        config.vectorAASigma, config.vectorAAThreshold,
-        config.useRasterAdaptive, config.minCoverage,
-        config.denoiseStrength, config.denoiseSpatial,
-        perChannelMin, perChannelMax, perChannelGamma,
-        config.useSubstrateKnockout, config.substrateColorHex, config.substrateThreshold,
-        useGradientList, config.useSuperSampling
-    );
+        const layersDataMapList = layersProxy.toJs();
+        layersProxy.destroy();
+        separateColorsPy.destroy();
 
-    const layersDataMapList = layersProxy.toJs();
-    layersProxy.destroy();
-    separateColorsPy.destroy();
+        const resultLayers: Layer[] = [];
 
-    const resultLayers: Layer[] = [];
+        for (const item of layersDataMapList) {
+            let index, layerDataRaw;
+            if (item instanceof Map) {
+                index = item.get("index");
+                layerDataRaw = item.get("data");
+            } else {
+                index = item.index;
+                layerDataRaw = item.data;
+            }
 
-    for (const item of layersDataMapList) {
-        let index, layerDataRaw;
-        if (item instanceof Map) {
-            index = item.get("index");
-            layerDataRaw = item.get("data");
-        } else {
-            index = item.index;
-            layerDataRaw = item.data;
+            const color = palette[index];
+            const layerData = new Uint8ClampedArray(layerDataRaw);
+            resultLayers.push({
+                id: `layer-${color.id}-${Date.now()}`,
+                color: color,
+                data: new ImageData(layerData, width, height),
+                visible: true
+            });
         }
 
-        const color = palette[index];
-        const layerData = new Uint8ClampedArray(layerDataRaw);
-        resultLayers.push({
-            id: `layer-${color.id}-${Date.now()}`,
-            color: color,
-            data: new ImageData(layerData, width, height),
-            visible: true
-        });
+        return resultLayers;
     }
-
-    return resultLayers;
 };
 
 export const applyHalftone = async (imageData: ImageData, config: AdvancedConfig, channelAngle?: number): Promise<ImageData> => {
