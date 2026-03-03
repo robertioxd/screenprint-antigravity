@@ -86,6 +86,69 @@ const AdvancedSettings: React.FC<AdvancedSettingsProps> = ({ config, onChange, i
             </div>
           </div>
 
+          {/* SECCIÓN 2: CALIDAD DE GRADIENTES (WEBGL) */}
+          <div className="space-y-4 pb-3 border-b border-gray-700">
+            <label className="text-gray-400 font-bold uppercase flex items-center gap-1">
+              2. Calidad de Gradientes y Dureza
+            </label>
+
+            <div className="space-y-1">
+              <div className="flex justify-between text-gray-400">
+                <span className="text-[10px]">Spot Hardness (Dureza Pura)</span>
+                <span className="text-blue-400 font-mono text-[10px]">{config.spotHardness || 0.1}</span>
+              </div>
+              <input
+                type="range" min="0" max="1" step="0.05"
+                value={config.spotHardness || 0.1}
+                onChange={(e) => updateField('spotHardness', parseFloat(e.target.value))}
+                className="w-full h-1 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-blue-500"
+                title="Bajo = Suave/Fotográfico. Alto = Duro/Vectorial puro sin gradientes suaves."
+              />
+            </div>
+
+            <div className="space-y-1">
+              <div className="flex justify-between text-gray-400">
+                <span className="text-[10px]">Tolerancia Blend (Anti-Muddying)</span>
+                <span className="text-blue-400 font-mono text-[10px]">{config.blendTolerance || 0.05}</span>
+              </div>
+              <input
+                type="range" min="0" max="0.2" step="0.01"
+                value={config.blendTolerance || 0.05}
+                onChange={(e) => updateField('blendTolerance', parseFloat(e.target.value))}
+                className="w-full h-1 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-blue-500"
+                title="Penaliza gradientes secundarios (gris/cafés). A mayor tolerancia, colores más vivos pero menos suaves."
+              />
+            </div>
+
+            <div className="space-y-1">
+              <div className="flex justify-between text-gray-400">
+                <span className="text-[10px]">Fuerza Alpha Edge Mask</span>
+                <span className="text-blue-400 font-mono text-[10px]">{config.alphaStrength || 1.0}</span>
+              </div>
+              <input
+                type="range" min="0" max="1" step="0.1"
+                value={config.alphaStrength || 1.0}
+                onChange={(e) => updateField('alphaStrength', parseFloat(e.target.value))}
+                className="w-full h-1 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-blue-500"
+                title="Multiplier transparency towards alpha borders to kill anti-aliasing halos."
+              />
+            </div>
+
+            <div className="space-y-1">
+              <div className="flex justify-between text-gray-400">
+                <span className="text-[10px]">Alpha Threshold (Corte duro)</span>
+                <span className="text-blue-400 font-mono text-[10px]">{config.alphaThreshold || 0.01}</span>
+              </div>
+              <input
+                type="range" min="0" max="0.1" step="0.005"
+                value={config.alphaThreshold || 0.01}
+                onChange={(e) => updateField('alphaThreshold', parseFloat(e.target.value))}
+                className="w-full h-1 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-blue-500"
+                title="Punto de corte por debajo del cual el píxel se descarta 100% de la placa. Evita ruido en gradientes muy tenues."
+              />
+            </div>
+          </div>
+
           {/* SECCIÓN 1: MOTOR DE SEPARACIÓN */}
           <div className="space-y-2 pb-3 border-b border-gray-700">
             <label className="text-gray-400 font-bold uppercase flex items-center gap-1">
@@ -288,10 +351,10 @@ const AdvancedSettings: React.FC<AdvancedSettingsProps> = ({ config, onChange, i
             )}
           </div>
 
-          {/* SECCIÓN 2: LIMPIEZA (POST-PROCESO) */}
+          {/* SECCIÓN 3: LIMPIEZA (POST-PROCESO) */}
           <div className="space-y-4 pb-3 border-b border-gray-700">
             <label className="text-gray-400 font-bold uppercase flex items-center gap-1">
-              2. Limpieza y Refinamiento
+              3. Limpieza y Refinamiento
               <span title="Post-proceso para eliminar ruido y limpiar bordes."><Eraser className="w-3 h-3 opacity-50" /></span>
             </label>
 
@@ -341,10 +404,60 @@ const AdvancedSettings: React.FC<AdvancedSettingsProps> = ({ config, onChange, i
             </div>
           </div>
 
-          {/* SECCIÓN 3: HALFTONING */}
+          {/* SECCIÓN 4: BASE BLANCA (UNDERBASE) */}
+          <div className="space-y-4 pb-3 border-b border-gray-700">
+            <label className="text-gray-400 font-bold uppercase flex items-center gap-1">
+              4. Base Blanca (Underbase)
+              <span title="Configuración de la capa base para prendas oscuras"><Layers className="w-3 h-3 opacity-50" /></span>
+            </label>
+
+            <div className="space-y-1">
+              <div className="flex justify-between text-gray-400">
+                <span className="text-[10px]">Fuerza Underbase</span>
+                <span className="text-blue-400 font-mono text-[10px]">{config.ubStrength || 1.0}</span>
+              </div>
+              <input
+                type="range" min="0" max="2" step="0.1"
+                value={config.ubStrength || 1.0}
+                onChange={(e) => updateField('ubStrength', parseFloat(e.target.value))}
+                className="w-full h-1 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-blue-500"
+                title="Amplifica la plasta blanca debajo de todo."
+              />
+            </div>
+
+            <div className="space-y-1">
+              <div className="flex justify-between text-gray-400">
+                <span className="text-[10px]">Underbase Gamma Curve</span>
+                <span className="text-blue-400 font-mono text-[10px]">{config.ubGamma || 1.0}</span>
+              </div>
+              <input
+                type="range" min="0.1" max="3" step="0.1"
+                value={config.ubGamma || 1.0}
+                onChange={(e) => updateField('ubGamma', parseFloat(e.target.value))}
+                className="w-full h-1 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-blue-500"
+                title="Control fotográfico de medios tonos base."
+              />
+            </div>
+
+            <div className="space-y-1">
+              <div className="flex justify-between text-gray-400">
+                <span className="text-[10px]">Choke (Erosión interior)</span>
+                <span className="text-blue-400 font-mono text-[10px]">{config.underbaseChoke} px</span>
+              </div>
+              <input
+                type="range" min="0" max="5" step="1"
+                value={config.underbaseChoke}
+                onChange={(e) => updateField('underbaseChoke', parseInt(e.target.value))}
+                className="w-full h-1 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-blue-500"
+                title="Reduce el tamaño del underbase para evitar bordes blancos (1-2px recomendado)"
+              />
+            </div>
+          </div>
+
+          {/* SECCIÓN 5: HALFTONING */}
           <div className="space-y-3 pb-3 border-b border-gray-700">
             <label className="text-gray-400 font-bold uppercase flex items-center gap-1">
-              3. Trama (Halftone)
+              5. Trama (Halftone)
               <span title="Configuración de puntos para serigrafía."><Grid3X3 className="w-3 h-3 opacity-50" /></span>
             </label>
 
@@ -394,27 +507,7 @@ const AdvancedSettings: React.FC<AdvancedSettingsProps> = ({ config, onChange, i
             )}
           </div>
 
-          {/* SECCIÓN 4: BASE BLANCA (UNDERBASE) */}
-          <div className="space-y-3 pb-3 border-b border-gray-700">
-            <label className="text-gray-400 font-bold uppercase flex items-center gap-1">
-              4. Underbase (Base Blanca)
-              <span title="Configuración de la capa base para prendas oscuras"><Layers className="w-3 h-3 opacity-50" /></span>
-            </label>
-            <div className="space-y-1">
-              <div className="flex justify-between text-gray-400">
-                <span className="text-[10px]">Choke (Erosión interior)</span>
-                <span className="text-blue-400 font-mono text-[10px]">{config.underbaseChoke} px</span>
-              </div>
-              <input
-                type="range" min="0" max="5" step="1"
-                value={config.underbaseChoke}
-                onChange={(e) => updateField('underbaseChoke', parseInt(e.target.value))}
-                className="w-full h-1 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-blue-500"
-                title="Reduce el tamaño del underbase para evitar bordes blancos (1-2px recomendado)"
-              />
-            </div>
-          </div>
-
+          {/* SECCIÓN 6: OPACIDAD GENERAL */}
           <div className="space-y-1 pt-2">
             <div className="flex justify-between items-center">
               <label className="text-gray-400 font-bold uppercase flex items-center gap-1">
@@ -429,6 +522,7 @@ const AdvancedSettings: React.FC<AdvancedSettingsProps> = ({ config, onChange, i
               className="w-full h-1 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-blue-500"
             />
           </div>
+
         </div>
       )}
     </div>

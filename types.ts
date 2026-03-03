@@ -71,6 +71,14 @@ export interface AdvancedConfig {
 
   // Underbase
   underbaseChoke: number; // 0-5px: Erosion of the underbase mask to prevent white edges
+  ubStrength: number;
+  ubGamma: number;
+
+  // Render Engine (WebGL)
+  spotHardness: number;  // 0-1
+  blendTolerance: number; // 0-0.5
+  alphaThreshold: number; // 0-0.1
+  alphaStrength: number;  // 0-1
 }
 
 export const DEFAULT_CONFIG: AdvancedConfig = {
@@ -109,7 +117,14 @@ export const DEFAULT_CONFIG: AdvancedConfig = {
   halftoneAngle: 22.5,
   gamma: 1.25,
 
-  underbaseChoke: 1
+  underbaseChoke: 1,
+  ubStrength: 1.0,
+  ubGamma: 1.0,
+
+  spotHardness: 0.1,
+  blendTolerance: 0.05,
+  alphaThreshold: 0.01,
+  alphaStrength: 1.0
 };
 
 export enum ProcessingStatus {

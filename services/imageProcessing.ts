@@ -1,7 +1,11 @@
 import { PaletteColor, Layer, AdvancedConfig } from '../types';
+import { WebGLEngine } from './webglEngine';
+import { VectorMath } from './vectorMath';
+import { findClosestPantone } from './pantoneMatcher';
 
 let pyodide: any = null;
 let pythonInitialized = false;
+let sharedWebGLEngine: WebGLEngine | null = null;
 
 export const hexToRgb = (hex: string) => {
     const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
@@ -505,70 +509,222 @@ export const resizeImage = async (imageData: ImageData, targetW: number, targetH
 };
 
 export const analyzePalette = async (imageData: ImageData, numColors: number, config: AdvancedConfig): Promise<PaletteColor[]> => {
-    if (!pyodide) throw new Error("Pyodide not initialized");
     const { width, height, data } = imageData;
-    const analyzePalettePy = pyodide.globals.get('analyze_palette_py');
-    const hexColorsProxy = await analyzePalettePy(data, width, height, numColors, config.sampleSize);
-    const hexColors: string[] = hexColorsProxy.toJs();
-    hexColorsProxy.destroy();
-    analyzePalettePy.destroy();
-    return hexColors.map((hex, i) => ({
-        id: `auto-${i}-${Date.now()}`,
-        hex: hex,
-        rgb: hexToRgb(hex),
-        locked: false
-    }));
+    const sampleSize = config.sampleSize || 25000;
+
+    // 1. Extract and Downsample Pixels
+    const step = Math.max(1, Math.floor((width * height) / sampleSize));
+    const pixels: { r: number, g: number, b: number }[] = [];
+
+    let sumR = 0, sumG = 0, sumB = 0;
+    for (let i = 0; i < data.length; i += 4 * step) {
+        if (data[i + 3] > 127) { // Include only opaque enough pixels
+            const r = data[i], g = data[i + 1], b = data[i + 2];
+            pixels.push({ r, g, b });
+            sumR += r; sumG += g; sumB += b;
+        }
+    }
+
+    if (pixels.length === 0) {
+        return [{ id: 'auto-0', hex: '#000000', rgb: { r: 0, g: 0, b: 0 }, locked: false }];
+    }
+
+    // 2. Iterative Furthest Point Sampling (IFPS)
+    const average = {
+        r: sumR / pixels.length,
+        g: sumG / pixels.length,
+        b: sumB / pixels.length
+    };
+
+    const selectedPoints: { r: number, g: number, b: number }[] = [];
+    const distances = new Float32Array(pixels.length).fill(999999);
+
+    // First point is furthest from average
+    let maxDist = -1;
+    let bestIdx = 0;
+    for (let i = 0; i < pixels.length; i++) {
+        const d = VectorMath.colorDistance3D(pixels[i], average);
+        if (d > maxDist) {
+            maxDist = d;
+            bestIdx = i;
+        }
+    }
+    selectedPoints.push(pixels[bestIdx]);
+
+    // Iteratively find furthest points from the set of already selected points
+    for (let count = 1; count < numColors; count++) {
+        maxDist = -1;
+        bestIdx = 0;
+
+        for (let i = 0; i < pixels.length; i++) {
+            const p = pixels[i];
+            let distToSet = 0;
+
+            if (count === 1) {
+                distToSet = VectorMath.colorDistance3D(p, selectedPoints[0]);
+            } else if (count === 2) {
+                distToSet = VectorMath.distanceToLineSegment(p, selectedPoints[0], selectedPoints[1]);
+            } else if (count === 3) {
+                distToSet = VectorMath.distanceToTriangle(p, selectedPoints[0], selectedPoints[1], selectedPoints[2]);
+            } else {
+                distToSet = VectorMath.distanceToConvexHull(p, selectedPoints);
+            }
+
+            distances[i] = Math.min(distances[i], distToSet);
+
+            if (distances[i] > maxDist) {
+                maxDist = distances[i];
+                bestIdx = i;
+            }
+        }
+        selectedPoints.push(pixels[bestIdx]);
+    }
+
+    // 3. Match with Pantones and Format Output
+    return selectedPoints.map((p, i) => {
+        const hex = rgbToHex(p.r, p.g, p.b);
+        const pantoneResult = findClosestPantone(hex);
+        const pantone = pantoneResult ? pantoneResult.match : null;
+
+        return {
+            id: `auto-${i}-${Date.now()}`,
+            hex: pantone ? pantone.hex : hex,
+            rgb: pantone ? hexToRgb(pantone.hex) : p,
+            locked: false
+        };
+    });
 };
 
+// Anti-Muddying logic
+function detectBlockedPairs(palette: PaletteColor[]): number[][] {
+    const blocked: number[][] = [];
+    const n = palette.length;
+    for (let i = 0; i < n; i++) {
+        for (let j = i + 1; j < n; j++) {
+            const p1 = palette[i].rgb;
+            const p2 = palette[j].rgb;
+            let isBlocked = false;
+
+            for (let k = 0; k < n; k++) {
+                if (k === i || k === j) continue;
+                const pk = palette[k].rgb;
+
+                // Vector checks
+                const v12 = { r: p2.r - p1.r, g: p2.g - p1.g, b: p2.b - p1.b };
+                const v1k = { r: pk.r - p1.r, g: pk.g - p1.g, b: pk.b - p1.b };
+
+                const dot12 = v12.r * v12.r + v12.g * v12.g + v12.b * v12.b;
+                if (dot12 === 0) continue;
+
+                const t = (v1k.r * v12.r + v1k.g * v12.g + v1k.b * v12.b) / dot12;
+
+                if (t > 0.1 && t < 0.9) {
+                    const proj = {
+                        r: p1.r + t * v12.r,
+                        g: p1.g + t * v12.g,
+                        b: p1.b + t * v12.b
+                    };
+                    const dist = VectorMath.colorDistance3D(pk, proj);
+                    if (dist < 30.0) { // Tolerance threshold for blocking
+                        isBlocked = true;
+                        break;
+                    }
+                }
+            }
+            if (isBlocked) blocked.push([i, j]);
+        }
+    }
+    return blocked;
+}
+
 export const performSeparation = async (imageData: ImageData, palette: PaletteColor[], config: AdvancedConfig): Promise<Layer[]> => {
-    if (!pyodide) throw new Error("Pyodide not initialized");
-    const { width, height, data } = imageData;
-    const paletteHex = palette.map(p => p.hex);
+    const { width, height } = imageData;
 
-    const separateColorsPy = pyodide.globals.get('separate_colors_py');
+    if (!sharedWebGLEngine) {
+        sharedWebGLEngine = new WebGLEngine();
+    }
+    sharedWebGLEngine.loadImage(imageData, width, height);
 
-    // Build per-channel gradient arrays from palette
-    const perChannelMin = palette.map(p => p.gradientMin !== undefined ? p.gradientMin : -1);
-    const perChannelMax = palette.map(p => p.gradientMax !== undefined ? p.gradientMax : 0);
-    const perChannelGamma = palette.map(p => p.gamma !== undefined ? p.gamma : 0);
-    const useGradientList = palette.map(p => !!p.useGradient);
+    const numColors = palette.length;
+    const paletteRgb = new Array(16 * 3).fill(0);
+    const inkPalette = new Array(16 * 3).fill(0);
+    const channelActive = new Array(16).fill(0);
+    const channelVisible = new Array(16).fill(0);
+    const channelUnderbase = new Array(16).fill(0);
+    const channelChoke = new Array(16).fill(0);
+    const channelSpread = new Array(16).fill(0);
+    const channelChokeUB = new Array(16).fill(0);
+    const channelSpreadUB = new Array(16).fill(0);
+    const channelBlackPt = new Array(16).fill(0);
+    const channelWhitePt = new Array(16).fill(1);
+    const channelMidPt = new Array(16).fill(0.5);
 
-    const layersProxy = await separateColorsPy(
-        data, width, height, paletteHex,
-        config.kL, config.kC, config.kH,
-        config.separationMethod, config.separationType,
-        config.cleanupStrength, config.smoothEdges,
-        config.gamma, config.useVectorAntiAliasing,
-        config.vectorAASigma, config.vectorAAThreshold,
-        config.useRasterAdaptive, config.minCoverage,
-        config.denoiseStrength, config.denoiseSpatial,
-        perChannelMin, perChannelMax, perChannelGamma,
-        config.useSubstrateKnockout, config.substrateColorHex, config.substrateThreshold,
-        useGradientList, config.useSuperSampling
-    );
+    // Populate arrays
+    for (let i = 0; i < numColors; i++) {
+        const p = palette[i];
+        paletteRgb[i * 3] = p.rgb.r / 255;
+        paletteRgb[i * 3 + 1] = p.rgb.g / 255;
+        paletteRgb[i * 3 + 2] = p.rgb.b / 255;
 
-    const layersDataMapList = layersProxy.toJs();
-    layersProxy.destroy();
-    separateColorsPy.destroy();
+        inkPalette[i * 3] = p.rgb.r / 255;
+        inkPalette[i * 3 + 1] = p.rgb.g / 255;
+        inkPalette[i * 3 + 2] = p.rgb.b / 255;
+
+        channelActive[i] = 1;
+        channelVisible[i] = 1;
+        channelUnderbase[i] = p.isUnderbase ? 1 : 0;
+
+        const gamma = p.gamma && p.gamma > 0 ? p.gamma : 0.5; // WebGL midpoint gamma
+        channelMidPt[i] = gamma;
+    }
+
+    const blendEnabled = [true, true, true, false]; // Default: single, pair, triplet on
+    const bt = config.blendTolerance !== undefined ? config.blendTolerance : 0.05;
+    const blendTolerance = [bt, bt * 0.6, bt * 0.4, 0.02];
 
     const resultLayers: Layer[] = [];
 
-    for (const item of layersDataMapList) {
-        let index, layerDataRaw;
-        if (item instanceof Map) {
-            index = item.get("index");
-            layerDataRaw = item.get("data");
-        } else {
-            index = item.index;
-            layerDataRaw = item.data;
-        }
+    const subRgb = config.substrateColorHex ? hexToRgb(config.substrateColorHex) : { r: 25, g: 25, b: 25 };
 
-        const color = palette[index];
-        const layerData = new Uint8ClampedArray(layerDataRaw);
+    for (let i = 0; i < numColors; i++) {
+        const color = palette[i];
+
+        const params = {
+            palette: paletteRgb,
+            inkPalette: inkPalette,
+            channelActive: channelActive,
+            channelVisible: channelVisible,
+            channelUnderbase: channelUnderbase,
+            channelChoke: channelChoke,
+            channelSpread: channelSpread,
+            channelChokeUB: channelChokeUB,
+            channelSpreadUB: channelSpreadUB,
+            channelBlackPt: channelBlackPt,
+            channelWhitePt: channelWhitePt,
+            channelMidPt: channelMidPt,
+            paletteSize: numColors,
+            blendEnabled: blendEnabled,
+            blendTolerance: blendTolerance,
+            viewMode: 3, // Extraction Mode
+            selectedChannel: i,
+            alphaStrength: config.alphaStrength !== undefined ? config.alphaStrength : 1.0,
+            alphaThreshold: config.alphaThreshold !== undefined ? config.alphaThreshold : 0.01,
+            spotHardness: config.spotHardness !== undefined ? config.spotHardness : 0.0,
+            ubStrength: config.ubStrength !== undefined ? config.ubStrength : 1.0,
+            ubGamma: config.ubGamma !== undefined ? config.ubGamma : 1.0,
+            bgColor: [subRgb.r / 255, subRgb.g / 255, subRgb.b / 255],
+            ubEnabled: config.useSubstrateKnockout,
+            ubVisible: true,
+            blockedPairs: detectBlockedPairs(palette)
+        };
+
+        sharedWebGLEngine.render(params);
+        const layerImageData = sharedWebGLEngine.getPixelData();
+
         resultLayers.push({
             id: `layer-${color.id}-${Date.now()}`,
             color: color,
-            data: new ImageData(layerData, width, height),
+            data: layerImageData,
             visible: true
         });
     }
